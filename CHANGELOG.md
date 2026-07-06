@@ -8,6 +8,10 @@ When you release a new version, append a section here and bump `version` in `pac
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-07-06
+
+First public open-source release, published to GHCR.
+
 ### Added
 - **Apache-2.0 license** (`LICENSE.md` + `NOTICE`) and `CONTRIBUTING.md` - the
   repo is now open source.
