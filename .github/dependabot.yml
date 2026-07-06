@@ -1,0 +1,46 @@
+version: 2
+
+updates:
+  # NPM deps. Security-only: scheduled bumps are disabled but
+  # security alerts still create PRs (they ignore open-pull-requests-limit).
+  # All dependencies are public, so no private registry config is needed.
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 0
+    labels:
+      - "dependencies"
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+    groups:
+      aws-sdk:
+        patterns:
+          - "@aws-sdk/*"
+      dev-dependencies:
+        patterns:
+          - "@types/*"
+          - "typescript"
+          - "tsx"
+
+  # Docker base image bumps (node:24-trixie-slim).
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 0
+    labels:
+      - "dependencies"
+      - "docker"
+
+  # GitHub Actions - security-only.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 0
+    labels:
+      - "dependencies"
+      - "github-actions"
