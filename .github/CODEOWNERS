@@ -1,0 +1,11 @@
+# CODEOWNERS - Bike4Mind/subscriber-fanout
+#
+# This is a single-purpose infra image, so one default owner covers the whole
+# tree: every PR requires review from the maintainers team rather than from any
+# arbitrary approver.
+#
+# Enforcement: the `main` branch ruleset must have "Require review from Code
+# Owners" turned on for this to actually gate merges. Until then GitHub only
+# shows a cosmetic owner annotation on PRs.
+
+* @bike4mind/subscriber-fanout-maintainers
