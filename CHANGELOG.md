@@ -8,6 +8,18 @@ When you release a new version, append a section here and bump `version` in `pac
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-07-07
+
+Security-only release: drains all open Dependabot alerts ahead of the public repo/package flip. No runtime behavior change.
+
+### Security
+- **Bumped `@aws-sdk/client-apigatewaymanagementapi` (`3.654.0` -> `^3.1080.0`) and `@aws-sdk/credential-providers` (`^3.665.0` -> `^3.1080.0`).** The stale, exact-pinned client dragged in vulnerable transitives; the modern SDK drops them entirely. This clears 8 of 9 alerts:
+  - `fast-xml-parser` (`4.4.1`) - 1 critical, 2 high, 2 moderate, 1 low. No longer in the tree.
+  - `uuid` (`9.0.1`) - 1 moderate. No longer in the tree.
+  - `@smithy/config-resolver` (`3.0.13`) - 1 low. No longer in the tree.
+- **Refreshed `esbuild` (`0.28.0` -> `0.28.1`)** via a lockfile update within `tsx`'s existing range (dev-only, 1 low). Clears the 9th alert.
+- `pnpm audit` now reports no known vulnerabilities. None of these packages are used directly.
+
 ## [1.2.0] - 2026-07-06
 
 First public open-source release, published to GHCR.
