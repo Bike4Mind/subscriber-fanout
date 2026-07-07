@@ -1,6 +1,6 @@
 {
   "name": "subscriber-fanout",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Long-running MongoDB change-stream to WebSocket fan-out service. Image consumed by downstream consumer apps via SST.",
   "license": "Apache-2.0",
   "main": "dist/index.js",
@@ -23,8 +23,8 @@
     "pnpm": ">=10.34.0"
   },
   "dependencies": {
-    "@aws-sdk/client-apigatewaymanagementapi": "3.654.0",
-    "@aws-sdk/credential-providers": "^3.665.0",
+    "@aws-sdk/client-apigatewaymanagementapi": "^3.1080.0",
+    "@aws-sdk/credential-providers": "^3.1080.0",
     "async-mutex": "^0.5.0",
     "dotenv": "^16.3.1",
     "flat": "^6.0.1",
