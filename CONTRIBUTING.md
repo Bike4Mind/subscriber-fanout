@@ -85,14 +85,12 @@ pnpm build          # tsc -> dist/
 pnpm dev            # tsx watch (requires MONGODB_URI + STAGE in the environment)
 ```
 
-All dependencies are public, so `pnpm install` needs no registry auth. `NPM_TOKEN`
-is an optional build-arg, only needed if you install from a private mirror (see
-the `README.md`).
+All dependencies are public, so `pnpm install` needs no registry auth.
 
 ### Docker build
 
 ```bash
-docker buildx build --platform linux/amd64 --build-arg NPM_TOKEN="$NPM_TOKEN" -t subscriber-fanout:local .
+docker buildx build --platform linux/amd64 -t subscriber-fanout:local .
 ```
 
 See [README.md](./README.md) for how the image is built, released, and consumed

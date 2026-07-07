@@ -168,14 +168,11 @@ pnpm build
 pnpm dev           # tsx watch; requires MONGODB_URI + STAGE in the environment
 ```
 
-Build the Docker image (token-free):
+Build the Docker image (all deps are public, so no registry auth is needed):
 
 ```sh
 docker build -t ghcr.io/bike4mind/subscriber-fanout:local .
 ```
-
-`NPM_TOKEN` is an optional build-arg, only needed if you install from a private
-mirror.
 
 ## Repo conventions
 

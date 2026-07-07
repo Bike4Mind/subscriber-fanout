@@ -8,6 +8,9 @@ When you release a new version, append a section here and bump `version` in `pac
 
 ## [Unreleased]
 
+### Removed
+- **Dropped the dead `NPM_TOKEN` build-arg** from the `Dockerfile` (both stages) and the `README.md` / `CONTRIBUTING.md` build docs. All deps are public so it was always empty; the unused `ARG NPM_TOKEN` also tripped the BuildKit `SecretsUsedInArgOrEnv` lint. No change to the built image.
+
 ## [1.2.1] - 2026-07-07
 
 Security-only release: drains all open Dependabot alerts ahead of the public repo/package flip. No runtime behavior change.
