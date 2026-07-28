@@ -27,8 +27,8 @@ importers:
         specifier: ^4.18.1
         version: 4.18.1
       mongoose:
-        specifier: ^7.8.4
-        version: 7.8.9(@aws-sdk/credential-providers@3.1080.0)
+        specifier: ^7.8.10
+        version: 7.8.10(@aws-sdk/credential-providers@3.1080.0)
       p-limit:
         specifier: ^5.0.0
         version: 5.0.0
@@ -286,8 +286,8 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@mongodb-js/saslprep@1.4.11':
-    resolution: {integrity: sha512-o9rAHc0IpIjuPSxRutWpE1F62x7n+4mVS4rCNHkzhIUMQcc18bb6xEq5wd2NdN0WjepIyXIppRshYI2kQDOZVA==}
+  '@mongodb-js/saslprep@1.4.13':
+    resolution: {integrity: sha512-E3Sv4eCYAlKYUTx8S3ioQcDUscOif+8zZ5OnW1IzJ+Tt+EO+ke8mn+Y3FX6N1H79picwbdOavVOb1jPi2EOyrg==}
 
   '@smithy/core@3.29.1':
     resolution: {integrity: sha512-qoiY4nrk5OCu1+eIR1VB8l5DmON/oKiqrd5zZFAhXJXjJlLWQusKEW/SkBDAtGDcPaz86m9kfcE1lngU0GlM6A==}
@@ -369,8 +369,8 @@ packages:
     engines: {node: ^8.16.0 || ^10.6.0 || >=11.0.0}
     os: [darwin]
 
-  ip-address@10.2.0:
-    resolution: {integrity: sha512-/+S6j4E9AHvW9SWMSEY9Xfy66O5PWvVEJ08O0y5JGyEKQpojb0K0GKpz/v5HJ/G0vi3D2sjGK78119oXZeE0qA==}
+  ip-address@10.3.1:
+    resolution: {integrity: sha512-1e9d3kb97NHJTIJDZW9rKqW2h6+dFa50Dy0fpPSMQp2ADje5gvKsXmdiK6dwY5t76TaTt5+P5N1Y/LoToIxP6g==}
     engines: {node: '>= 12'}
 
   jose@4.15.9:
@@ -417,8 +417,8 @@ packages:
       snappy:
         optional: true
 
-  mongoose@7.8.9:
-    resolution: {integrity: sha512-V3GBAJbmOAdzEP8murOvlg7q1szlbe4jTBRyW+JBHRduJBe7F9dk5eyqJDTuYrdBcOOWfLbr6AgXrDK7F0/o5A==}
+  mongoose@7.8.10:
+    resolution: {integrity: sha512-d+ASyz9FjXnzA9yrgbiAKP3DX//i0QA7TgSOPmU/ONqbUP7v8tg5HbbY28a7wtOKiPYSaP605JoRLFelU7wKxA==}
     engines: {node: '>=14.20.1'}
 
   mpath@0.9.0:
@@ -811,7 +811,7 @@ snapshots:
   '@esbuild/win32-x64@0.28.1':
     optional: true
 
-  '@mongodb-js/saslprep@1.4.11':
+  '@mongodb-js/saslprep@1.4.13':
     dependencies:
       sparse-bitfield: 3.0.3
     optional: true
@@ -916,7 +916,7 @@ snapshots:
   fsevents@2.3.3:
     optional: true
 
-  ip-address@10.2.0: {}
+  ip-address@10.3.1: {}
 
   jose@4.15.9: {}
 
@@ -945,9 +945,9 @@ snapshots:
       socks: 2.8.9
     optionalDependencies:
       '@aws-sdk/credential-providers': 3.1080.0
-      '@mongodb-js/saslprep': 1.4.11
+      '@mongodb-js/saslprep': 1.4.13
 
-  mongoose@7.8.9(@aws-sdk/credential-providers@3.1080.0):
+  mongoose@7.8.10(@aws-sdk/credential-providers@3.1080.0):
     dependencies:
       bson: 5.5.1
       kareem: 2.5.1
@@ -997,7 +997,7 @@ snapshots:
 
   socks@2.8.9:
     dependencies:
-      ip-address: 10.2.0
+      ip-address: 10.3.1
       smart-buffer: 4.2.0
 
   sparse-bitfield@3.0.3:
