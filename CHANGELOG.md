@@ -18,6 +18,10 @@ Maintenance release: build cleanup and a dependency patch. No runtime behavior c
 ### Changed
 - **Bumped `mongoose` (`7.8.9` -> `7.8.10`)** via Dependabot. Patch bump, already on main since July.
 
+### Notes for consumers
+- **Wire protocol**: unchanged from `1.2.1`.
+- **Image**: same runtime contents as `1.2.1`; the only build difference is that the image config no longer carries an `ARG NPM_TOKEN` entry. Roll forward by bumping your image reference to `v1.2.2`.
+
 ## [1.2.1] - 2026-07-07
 
 Security-only release: drains all open Dependabot alerts ahead of the public repo/package flip. No runtime behavior change.
