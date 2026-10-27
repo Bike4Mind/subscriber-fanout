@@ -1,6 +1,6 @@
 {
   "name": "subscriber-fanout",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "description": "Long-running MongoDB change-stream to WebSocket fan-out service. Image consumed by downstream consumer apps via SST.",
   "license": "Apache-2.0",
   "main": "dist/index.js",

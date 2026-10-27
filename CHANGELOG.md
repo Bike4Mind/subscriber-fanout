@@ -8,8 +8,15 @@ When you release a new version, append a section here and bump `version` in `pac
 
 ## [Unreleased]
 
+## [1.2.2] - 2026-10-27
+
+Maintenance release: build cleanup and a dependency patch. No runtime behavior change.
+
 ### Removed
 - **Dropped the dead `NPM_TOKEN` build-arg** from the `Dockerfile` (both stages) and the `README.md` / `CONTRIBUTING.md` build docs. All deps are public so it was always empty; the unused `ARG NPM_TOKEN` also tripped the BuildKit `SecretsUsedInArgOrEnv` lint. No change to the built image.
+
+### Changed
+- **Bumped `mongoose` (`7.8.9` -> `7.8.10`)** via Dependabot. Patch bump, already on main since July.
 
 ## [1.2.1] - 2026-07-07
 
