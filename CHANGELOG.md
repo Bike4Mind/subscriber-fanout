@@ -8,6 +8,24 @@ When you release a new version, append a section here and bump `version` in `pac
 
 ## [Unreleased]
 
+Change streams are now opened per collection instead of per query subscription, cutting the server-side oplog scanning that dominated slow-op time under heavy writes.
+
+### Changed
+- **One change stream per collection.** Every subscription on a collection shares a single stream; it opens with the first subscription and closes with the last. Startup and close are logged at `info` with the collection name and subscription count.
+- **Filters and projections run in process.** Each subscription's `query` and `fields` are evaluated against the change event with `mingo` instead of a per-stream `$match` / `$project` pipeline. A query `mingo` cannot compile falls back to a dedicated stream built the old way, logged at `warn`.
+- **Query paths inside `$elemMatch` and embedded documents are no longer prefixed**, and `ObjectId` / `Date` operands are kept intact, so those queries now match as they would in a plain `find`.
+- **`lastChange` is no longer written** on `querySubscriptions` per event, and `subscribers` is only written back when the list actually shrinks. The field stays in the schema.
+
+### Added
+- **`subscriberFanoutCursors` collection** holding one resume token per collection, flushed at most every 5 seconds and on shutdown. Restarts resume from it; an expired token is cleared and the stream reopens live.
+- **Join-while-live replay**: a subscription added to an already-open stream receives the last 30 seconds (up to 500 events) of matching changes from its `updatedAt` on.
+- **Dependency `mingo` (`^7.2.7`)**, MIT, no transitive deps.
+- **Tests**: `pnpm test` runs unit and `mongodb-memory-server` integration tests; CI runs them after Typecheck.
+
+### Notes for consumers
+- **Wire protocol**: unchanged.
+- **Database**: the service now reads and writes `subscriberFanoutCursors`; the task's Mongo user needs write access to it.
+
 ## [1.2.2] - 2026-10-27
 
 Maintenance release: build cleanup and a dependency patch. No runtime behavior change.

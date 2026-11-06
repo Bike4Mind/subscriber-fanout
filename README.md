@@ -15,9 +15,12 @@ See [DESIGN.md](./DESIGN.md) for the architectural rationale.
 Watches MongoDB change streams and pushes matching document changes to WebSocket
 clients. A client subscribes to a Mongo query through its app's `subscribe_query`
 WebSocket route (which records the subscription in the `querySubscriptions`
-collection); this service watches the underlying collection's change stream and
-pushes each matching change back to subscribers by `POST`ing to the WebSocket
+collection); this service opens one change stream per watched collection,
+evaluates every subscription's query against each change in process, and pushes
+each matching change back to subscribers by `POST`ing to the WebSocket
 management endpoint (the API Gateway Management API `@connections/{id}` shape).
+Each collection's resume position is kept in the `subscriberFanoutCursors`
+collection so a restart picks up where the previous process stopped.
 
 The management endpoint is **API Gateway** in an AWS deployment, or a **local
 gateway that emulates that shape** in a self-host deployment - the fanout code is
@@ -165,6 +168,7 @@ Compatibility rules:
 pnpm install       # no registry auth needed; all deps are public
 pnpm typecheck
 pnpm build
+pnpm test          # downloads a mongod for mongodb-memory-server on first run
 pnpm dev           # tsx watch; requires MONGODB_URI + STAGE in the environment
 ```
 
