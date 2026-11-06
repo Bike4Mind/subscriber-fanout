@@ -6,9 +6,11 @@ import { buildMatcher, buildProjector, normalizeBson, transformAndPrefixQuery } 
 const { ObjectId, Long, Int32, Double, Decimal128, Binary } = mongoose.mongo;
 
 describe('normalizeBson', () => {
-  it('tags ObjectIds and unwraps numeric wrappers', () => {
+  it('tags strings and ObjectIds and unwraps numeric wrappers', () => {
     const id = new ObjectId();
-    assert.equal(normalizeBson(id), `ObjectId(${id.toHexString()})`);
+    assert.equal(normalizeBson(id), `o:${id.toHexString()}`);
+    assert.equal(normalizeBson('x'), 's:x');
+    assert.equal(normalizeBson(`o:${id.toHexString()}`), `s:o:${id.toHexString()}`);
     assert.equal(normalizeBson(Long.fromNumber(42)), 42);
     assert.equal(normalizeBson(new Int32(7)), 7);
     assert.equal(normalizeBson(new Double(1.5)), 1.5);
@@ -30,9 +32,9 @@ describe('normalizeBson', () => {
     const id = new ObjectId();
     const date = new Date(0);
     assert.deepEqual(normalizeBson({ a: [id, { b: Long.fromNumber(3), c: date }], d: null, e: 'x' }), {
-      a: [`ObjectId(${id.toHexString()})`, { b: 3, c: date }],
+      a: [`o:${id.toHexString()}`, { b: 3, c: date }],
       d: null,
-      e: 'x',
+      e: 's:x',
     });
   });
 });
@@ -87,6 +89,17 @@ describe('buildMatcher', () => {
     const id = new ObjectId();
     assert.equal(buildMatcher({ userId: id.toHexString() })(normalizeBson({ fullDocument: { userId: id } })), false);
     assert.equal(buildMatcher({ userId: id })(normalizeBson({ fullDocument: { userId: id.toHexString() } })), false);
+    assert.equal(buildMatcher({ userId: id })(normalizeBson({ fullDocument: { userId: `o:${id.toHexString()}` } })), false);
+  });
+
+  it('keeps string comparison and ordering operators working', () => {
+    const event = normalizeBson({ fullDocument: { name: 'bob', tags: ['x', 'y'] } });
+    assert.equal(buildMatcher({ name: { $in: ['bob', 'eve'] } })(event), true);
+    assert.equal(buildMatcher({ name: { $gt: 'alice', $lt: 'carol' } })(event), true);
+    assert.equal(buildMatcher({ name: { $ne: 'bob' } })(event), false);
+    assert.equal(buildMatcher({ tags: { $all: ['x', 'y'] } })(event), true);
+    assert.equal(buildMatcher({ tags: 'y' })(event), true);
+    assert.equal(buildMatcher({ name: { $type: 'string' } })(event), true);
   });
 
   it('keeps a __proto__ key as an own property', () => {

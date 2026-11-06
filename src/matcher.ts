@@ -54,8 +54,10 @@ function setOwn(target: Record<string, unknown>, key: string, value: unknown) {
 
 // mingo compares by value on plain JS types only, so BSON wrappers have to be
 // unwrapped on both the query and the event for equality to behave like Mongo.
-// ObjectIds keep a tag so a plain string never compares equal to one.
+// Strings and ObjectIds get distinct prefixes so no document value can collide
+// with an ObjectId operand; the prefix is constant, so string ordering holds.
 export function normalizeBson(value: unknown): unknown {
+  if (typeof value === 'string') return `s:${value}`;
   if (value === null || typeof value !== 'object') return value;
   if (Array.isArray(value)) return value.map(normalizeBson);
   if (value instanceof Date || value instanceof RegExp || ArrayBuffer.isView(value)) return value;
@@ -66,7 +68,7 @@ export function normalizeBson(value: unknown): unknown {
       break;
     case 'ObjectId':
     case 'ObjectID':
-      return `ObjectId(${bson.toHexString!()})`;
+      return `o:${bson.toHexString!()}`;
     case 'Long':
       return bson.toNumber!();
     case 'Int32':
@@ -82,7 +84,8 @@ export function normalizeBson(value: unknown): unknown {
 
   const normalized: Record<string, unknown> = {};
   for (const [key, inner] of Object.entries(value)) {
-    setOwn(normalized, key, normalizeBson(inner));
+    // $type names a BSON type, it is not a value to compare against.
+    setOwn(normalized, key, key === '$type' ? inner : normalizeBson(inner));
   }
   return normalized;
 }
