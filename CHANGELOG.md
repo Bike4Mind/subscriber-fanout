@@ -12,8 +12,8 @@ Change streams are now opened per collection instead of per query subscription, 
 
 ### Changed
 - **One change stream per collection.** Every subscription on a collection shares a single stream; it opens with the first subscription and closes with the last. Startup and close are logged at `info` with the collection name and subscription count.
-- **Filters and projections run in process.** Each subscription's `query` and `fields` are evaluated against the change event with `mingo` instead of a per-stream `$match` / `$project` pipeline. A query `mingo` cannot compile falls back to a dedicated stream built the old way, logged at `warn`.
-- **Query paths inside `$elemMatch` and embedded documents are no longer prefixed**, and `ObjectId` / `Date` operands are kept intact, so those queries now match as they would in a plain `find`.
+- **Filters and projections run in process.** Each subscription's `query` and `fields` are evaluated against the change event with `mingo` instead of a per-stream `$match` / `$project` pipeline. A query `mingo` cannot compile, or one carrying `$regex`, a regular expression, `$where`, `$expr`, `$function`, `$jsonSchema` or `$text`, falls back to a dedicated stream built the old way, logged at `warn`.
+- **Query paths inside `$elemMatch` and embedded documents are no longer prefixed**, and `ObjectId` / `Date` operands are kept intact. Before, an `ObjectId` operand on any field other than `_id` was serialised as an empty document, so a filter such as `{ userId: ObjectId }` or `{ sessionId: { $in: [ObjectId] } }` never matched a live change. Those subscriptions now deliver.
 - **`lastChange` is no longer written** on `querySubscriptions` per event, and `subscribers` is only written back when the list actually shrinks. The field stays in the schema.
 
 ### Added

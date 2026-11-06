@@ -6,9 +6,9 @@ import { buildMatcher, buildProjector, normalizeBson, transformAndPrefixQuery } 
 const { ObjectId, Long, Int32, Double, Decimal128, Binary } = mongoose.mongo;
 
 describe('normalizeBson', () => {
-  it('unwraps ObjectId and numeric wrappers', () => {
+  it('tags ObjectIds and unwraps numeric wrappers', () => {
     const id = new ObjectId();
-    assert.equal(normalizeBson(id), id.toHexString());
+    assert.equal(normalizeBson(id), `ObjectId(${id.toHexString()})`);
     assert.equal(normalizeBson(Long.fromNumber(42)), 42);
     assert.equal(normalizeBson(new Int32(7)), 7);
     assert.equal(normalizeBson(new Double(1.5)), 1.5);
@@ -30,7 +30,7 @@ describe('normalizeBson', () => {
     const id = new ObjectId();
     const date = new Date(0);
     assert.deepEqual(normalizeBson({ a: [id, { b: Long.fromNumber(3), c: date }], d: null, e: 'x' }), {
-      a: [id.toHexString(), { b: 3, c: date }],
+      a: [`ObjectId(${id.toHexString()})`, { b: 3, c: date }],
       d: null,
       e: 'x',
     });
@@ -82,6 +82,30 @@ describe('buildMatcher', () => {
   it('rejects queries mingo cannot evaluate', () => {
     assert.throws(() => buildMatcher({ userId: 'u', $comment: 'x' }));
   });
+
+  it('never equates a string with an ObjectId of the same hex', () => {
+    const id = new ObjectId();
+    assert.equal(buildMatcher({ userId: id.toHexString() })(normalizeBson({ fullDocument: { userId: id } })), false);
+    assert.equal(buildMatcher({ userId: id })(normalizeBson({ fullDocument: { userId: id.toHexString() } })), false);
+  });
+
+  it('keeps a __proto__ key as an own property', () => {
+    const normalized = normalizeBson(JSON.parse('{"fullDocument":{"__proto__":{"admin":true},"a":1}}')) as {
+      fullDocument: Record<string, unknown>;
+    };
+    assert.equal(Object.getPrototypeOf(normalized.fullDocument), Object.prototype);
+    assert.ok(Object.prototype.hasOwnProperty.call(normalized.fullDocument, '__proto__'));
+    assert.equal((normalized.fullDocument as { admin?: boolean }).admin, undefined);
+  });
+
+  it('sends regex and server-side JS operators to the dedicated stream', () => {
+    assert.throws(() => buildMatcher({ name: { $regex: 'a', $options: 'i' } }), /regex/);
+    assert.throws(() => buildMatcher({ name: /a/ }), /regular expression/);
+    assert.throws(() => buildMatcher({ $and: [{ tags: { $in: [/x/] } }] }), /regular expression/);
+    assert.throws(() => buildMatcher({ $where: 'true' }), /\$where/);
+    assert.throws(() => buildMatcher({ $expr: { $eq: ['$a', 1] } }), /\$expr/);
+    assert.doesNotThrow(() => buildMatcher({ name: { $in: ['a'] }, $or: [{ a: 1 }] }));
+  });
 });
 
 describe('buildProjector', () => {
@@ -115,6 +139,27 @@ describe('buildProjector', () => {
 
   it('keeps _id in inclusion mode', () => {
     assert.deepEqual(buildProjector({ email: true })({ _id: 1, email: 'e', name: 'n' }), { _id: 1, email: 'e' });
+  });
+
+  it('leaves the shared source document untouched and keeps BSON values by reference', () => {
+    const id = new ObjectId();
+    const createdAt = new Date();
+    const doc = {
+      _id: id,
+      createdAt,
+      mfa: { totpSecret: 's', enabled: true },
+      securityQuestions: [{ question: 'q', answer: 'a' }],
+    };
+    const projected = buildProjector({ 'mfa.totpSecret': false, 'securityQuestions.answer': false })(doc);
+    assert.deepEqual(projected, { _id: id, createdAt, mfa: { enabled: true }, securityQuestions: [{ question: 'q' }] });
+    assert.equal(projected._id, id);
+    assert.equal(projected.createdAt, createdAt);
+    assert.deepEqual(doc, {
+      _id: id,
+      createdAt,
+      mfa: { totpSecret: 's', enabled: true },
+      securityQuestions: [{ question: 'q', answer: 'a' }],
+    });
   });
 });
 

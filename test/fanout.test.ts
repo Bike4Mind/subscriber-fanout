@@ -183,6 +183,29 @@ describe('SubscriberFanout', () => {
     assert.equal(new Set(cursors.map(c => String(c.cursor.cursorId))).size, 1);
   });
 
+  it('projects each subscription independently from the shared event', async () => {
+    const { name, db } = freshDb();
+    const r = recorder();
+    const instance = await startFanout(name, r.send);
+    const stripped = await insertSubscription(db, {
+      collectionName: 'people',
+      query: {},
+      fields: { 'mfa.totpSecret': false, 'questions.answer': false },
+      connectionIds: ['cs'],
+    });
+    const full = await insertSubscription(db, { collectionName: 'people', query: {}, connectionIds: ['cf'] });
+    await waitForSubscription(instance, stripped);
+    await waitForSubscription(instance, full);
+
+    await db.collection('people').insertOne({ mfa: { totpSecret: 's', on: true }, questions: [{ q: 'q', answer: 'a' }] });
+    await waitFor(() => r.updates('cs').length === 1 && r.updates('cf').length === 1, 'both deliveries');
+
+    assert.deepEqual(r.updates('cs')[0].data.mfa, { on: true });
+    assert.deepEqual(r.updates('cs')[0].data.questions, [{ q: 'q' }]);
+    assert.deepEqual(r.updates('cf')[0].data.mfa, { totpSecret: 's', on: true });
+    assert.deepEqual(r.updates('cf')[0].data.questions, [{ q: 'q', answer: 'a' }]);
+  });
+
   it('applies inclusion and array-path exclusion projections', async () => {
     const { name, db } = freshDb();
     const r = recorder();
