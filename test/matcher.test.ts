@@ -99,7 +99,6 @@ describe('buildMatcher', () => {
     assert.equal(buildMatcher({ name: { $ne: 'bob' } })(event), false);
     assert.equal(buildMatcher({ tags: { $all: ['x', 'y'] } })(event), true);
     assert.equal(buildMatcher({ tags: 'y' })(event), true);
-    assert.equal(buildMatcher({ name: { $type: 'string' } })(event), true);
   });
 
   it('keeps a __proto__ key as an own property', () => {
@@ -118,6 +117,11 @@ describe('buildMatcher', () => {
     assert.throws(() => buildMatcher({ $where: 'true' }), /\$where/);
     assert.throws(() => buildMatcher({ $expr: { $eq: ['$a', 1] } }), /\$expr/);
     assert.doesNotThrow(() => buildMatcher({ name: { $in: ['a'] }, $or: [{ a: 1 }] }));
+  });
+
+  it('sends $type to the dedicated stream, since ObjectIds are strings once normalised', () => {
+    assert.throws(() => buildMatcher({ owner: { $type: 'objectId' } }), /\$type/);
+    assert.throws(() => buildMatcher({ $or: [{ owner: { $type: 'string' } }] }), /\$type/);
   });
 });
 

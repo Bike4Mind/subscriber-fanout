@@ -104,7 +104,17 @@ function clonePlain(value: unknown): unknown {
 
 // Server-side JS and regular expressions stay on the server: a regex here would
 // run on the event loop for every change, and $where would execute in process.
-const SERVER_ONLY_OPERATORS = new Set(['$regex', '$options', '$where', '$expr', '$function', '$jsonSchema', '$text']);
+// $type is answered against normalised values, where an ObjectId is a string.
+const SERVER_ONLY_OPERATORS = new Set([
+  '$regex',
+  '$options',
+  '$where',
+  '$expr',
+  '$function',
+  '$jsonSchema',
+  '$text',
+  '$type',
+]);
 
 function assertEvaluableInProcess(value: unknown, path = ''): void {
   if (value instanceof RegExp) throw new Error(`regular expression at ${path || '<root>'} is matched server-side`);
