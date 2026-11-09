@@ -405,6 +405,37 @@ describe('SubscriberFanout', () => {
     assert.equal(r.updates('c1')[0].data.tag, 'yes');
   });
 
+  it('resumes a dedicated stream after a restart without redelivering', async t => {
+    const { name, db } = freshDb();
+    t.mock.method(console, 'warn', () => {});
+    const first = recorder();
+    await insertSubscription(db, {
+      collectionName: 'dedicatedResume',
+      query: { tag: 'yes', $comment: 'dedicated' },
+      connectionIds: ['c1'],
+      updatedAt: new Date(Date.now() - 60 * 1000),
+    });
+    const instance = await startFanout(name, first.send);
+    assert.equal(instance.dedicatedStreamCount(), 1);
+
+    const { insertedId: before } = await db.collection('dedicatedResume').insertOne({ tag: 'yes' });
+    await waitFor(() => first.updates('c1').length === 1, 'first delivery');
+    await new Promise(resolve => setTimeout(resolve, 300));
+    await instance.stop();
+    fanout = undefined;
+
+    const { insertedId: after } = await db.collection('dedicatedResume').insertOne({ tag: 'yes' });
+    const second = recorder();
+    await startFanout(name, second.send);
+    await waitFor(() => second.updates('c1').length >= 1, 'resumed delivery');
+    await new Promise(resolve => setTimeout(resolve, 300));
+    assert.deepEqual(
+      second.updates('c1').map(u => u.data._id),
+      [after.toHexString()]
+    );
+    assert.notEqual(after.toHexString(), before.toHexString());
+  });
+
   it('drops subscribers after repeated failed pings and closes the stream when none remain', async () => {
     const { name, db } = freshDb();
     const r = recorder();

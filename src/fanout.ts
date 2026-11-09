@@ -229,6 +229,10 @@ export class SubscriberFanout {
     });
     changeStream.on('change', change => {
       this.sendChangeToSubscribers(change, subscription.id);
+      // Dedicated streams are not covered by subscriberFanoutCursors, so they keep resuming from lastChange.
+      QuerySubscription.updateOne({ _id: subscription.id }, { $set: { lastChange: JSON.stringify(change._id) } }).catch(
+        err => console.error(`Failed to store lastChange for ${subscription.id}:`, err)
+      );
     });
     changeStream.on('error', error => {
       console.error(
