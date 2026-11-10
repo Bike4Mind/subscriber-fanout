@@ -13,6 +13,10 @@ jobs:
   typecheck:
     name: Typecheck + build
     runs-on: ubuntu-latest
+    env:
+      # mongodb-memory-server downloads this mongod on first use; keep it in
+      # step with the cache key below.
+      MONGOMS_VERSION: 7.0.14
     steps:
       - uses: actions/checkout@v5
 
@@ -31,6 +35,14 @@ jobs:
 
       - name: Typecheck
         run: pnpm typecheck
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/mongodb-binaries
+          key: mongodb-binaries-${{ runner.os }}-${{ env.MONGOMS_VERSION }}
+
+      - name: Test
+        run: pnpm test
 
       - name: Build
         run: pnpm build
