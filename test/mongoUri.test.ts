@@ -101,3 +101,59 @@ test('leaves diagnostics readable when the password is short or absent', () => {
   assert.equal(describeConnectError(err('getaddrinfo ENOTFOUND h1'), 'mongodb://h1:27017,h2:27017/db'), 'MongoServerError: getaddrinfo ENOTFOUND h1');
   assert.equal(describeConnectError('boom', 'mongodb://h/db'), 'unknown error');
 });
+
+test('scrubs the username the driver echoes for unescaped characters', () => {
+  // mongodb-connection-string-url quotes the raw username in this message.
+  const uri = 'mongodb://svc[tok]:pw@h1:27017/db';
+  const error = Object.assign(new Error('Username contains unescaped characters svc[tok]'), { name: 'MongoParseError' });
+  const out = describeConnectError(error, uri);
+  assert.ok(!out.includes('svc[tok]'), out);
+  assert.ok(out.startsWith('MongoParseError: '), out);
+});
+
+test('scrubs a secret even when punctuation or word characters touch it', () => {
+  const uris = [
+    'mongodb://user:S3cr3tPw@h1:27017,h2:27018/db?authSource=admin',
+    'mongodb+srv://user:S3cr3tPw@cluster.example.net/db?retryWrites=true',
+    'mongodb://h1/db?tlsCertificateKeyFilePassword=S3cr3tPw',
+    'mongodb://h1/db?authMechanismProperties=AWS_SESSION_TOKEN:S3cr3tPw',
+  ];
+  const messages = ['got: S3cr3tPw.', 'pw=S3cr3tPw-tail', 'token_S3cr3tPw_x', '.S3cr3tPw', 'got s3cr3tpw'];
+  for (const uri of uris) {
+    for (const message of messages) {
+      const out = describeConnectError(new Error(message), uri);
+      assert.ok(!out.toLowerCase().includes('s3cr3tpw'), `${uri}: ${message} -> ${out}`);
+    }
+  }
+});
+
+test('hides credentials and options of an mongodb+srv string with encoded user:pass', () => {
+  const out = describeMongoUri(
+    'mongodb+srv://us%40er:p%3Aw%2Fd@cluster.example.net/db?authSource=admin&tlsCertificateKeyFilePassword=k3y',
+  );
+  assert.equal(out, 'mongodb+srv://***:***@cluster.example.net/db');
+});
+
+test('never throws and never echoes the input, whatever the string', () => {
+  const inputs = [
+    '',
+    '   ',
+    'S3cr3tPw',
+    'mongodb://',
+    'mongodb://@',
+    'mongodb://:S3cr3tPw@h/db',
+    'mongodb://user:S3cr3tPw@h/db\n',
+    ' mongodb://user:S3cr3tPw@h/db',
+    'mongodb://user:S3cr3tPw\uD800@h/db',
+    'mongodb://user\uDC00:S3cr3tPw@h/db?x=\uD800',
+    'mongodb://user:%E0%A4%A@h/db?x=%ZZ',
+    'MONGODB://user:S3cr3tPw@h/db',
+  ];
+  for (const uri of inputs) {
+    const description = describeMongoUri(uri);
+    const error = describeConnectError(new Error(`failed for ${uri}`), uri);
+    for (const out of [description, error]) {
+      assert.ok(!out.includes('S3cr3tPw'), `${JSON.stringify(uri)} -> ${out}`);
+    }
+  }
+});

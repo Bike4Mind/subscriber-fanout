@@ -11,26 +11,39 @@ const DATABASE = /^\/[A-Za-z0-9._-]*$/;
 interface ParsedMongoUri {
   description: string;
   wellFormed: boolean;
-  // Pieces of the password and every query option value, in each spelling the
-  // driver might echo, for scrubbing error messages.
+  // Pieces of the username, the password and every query option value, in each
+  // spelling the driver might echo, for scrubbing error messages.
   secretFragments: string[];
 }
 
-function spellings(piece: string): string[] {
-  const out = [piece, encodeURIComponent(piece)];
-  for (const form of [piece, piece.replace(/\+/g, ' ')]) {
-    try {
-      out.push(decodeURIComponent(form));
-    } catch {
-      // not percent-encoded; the raw piece is already in the list
-    }
+// A fragment at least this long is scrubbed wherever it appears, including
+// inside a longer token. A shorter one is scrubbed only as a whole token: a
+// one-character password would otherwise shred every address and timeout in
+// the message, and is no secret worth that.
+const MIN_UNBOUNDED_FRAGMENT_LENGTH = 4;
+
+function tryTransform(text: string, transform: (value: string) => string): string | undefined {
+  try {
+    return transform(text);
+  } catch {
+    // URIError: not valid percent-encoding, or a lone surrogate that has no
+    // encoded form. The raw piece is already in the list.
+    return undefined;
   }
-  return out;
 }
 
-function fragments(password: string, query: string): string[] {
+function spellings(piece: string): string[] {
+  const out = [piece, tryTransform(piece, encodeURIComponent)];
+  for (const form of [piece, piece.replace(/\+/g, ' ')]) {
+    out.push(tryTransform(form, decodeURIComponent));
+  }
+  return out.filter((spelling): spelling is string => Boolean(spelling));
+}
+
+function fragments(userinfo: string, query: string): string[] {
   const out = new Set<string>();
-  for (const piece of password.split(':')) {
+  // Username and password alike: some providers issue a token as the username.
+  for (const piece of userinfo.split(':')) {
     if (piece) spellings(piece).forEach(v => out.add(v));
   }
   for (const pair of query.split('&')) {
@@ -78,11 +91,10 @@ export function parseMongoUri(uri: string): ParsedMongoUri {
     };
   }
 
-  const colon = userinfo.indexOf(':');
   return {
     description: `${scheme}://${at === -1 ? '' : '***:***@'}${hosts}${DATABASE.test(path) ? path : ''}`,
     wellFormed: true,
-    secretFragments: fragments(colon === -1 ? '' : userinfo.slice(colon + 1), query),
+    secretFragments: fragments(userinfo, query),
   };
 }
 
@@ -95,9 +107,10 @@ function escapeRegExp(text: string): string {
 }
 
 // Driver and parser errors quote parts of the connection string in their
-// messages. For a well-formed string the password and query option values are
-// scrubbed out as whole tokens; for anything else the message is dropped and
-// only the class kept, because a malformed string can surface anywhere in it.
+// messages. For a well-formed string the username, password and query option
+// values are scrubbed out (see MIN_UNBOUNDED_FRAGMENT_LENGTH); for anything else
+// the message is dropped and only the class kept, because a malformed string can
+// surface anywhere in it.
 export function describeConnectError(error: unknown, uri: string): string {
   if (!(error instanceof Error)) return 'unknown error';
   const parsed = parseMongoUri(uri);
@@ -105,7 +118,11 @@ export function describeConnectError(error: unknown, uri: string): string {
 
   let message = error.message.split(uri).join('***');
   for (const fragment of parsed.secretFragments) {
-    message = message.replace(new RegExp(`(?<![A-Za-z0-9._%-])${escapeRegExp(fragment)}(?![A-Za-z0-9._%-])`, 'gi'), '***');
+    const pattern =
+      fragment.length >= MIN_UNBOUNDED_FRAGMENT_LENGTH
+        ? escapeRegExp(fragment)
+        : `(?<![A-Za-z0-9._%-])${escapeRegExp(fragment)}(?![A-Za-z0-9._%-])`;
+    message = message.replace(new RegExp(pattern, 'gi'), '***');
   }
   return `${error.name}: ${message}`;
 }
