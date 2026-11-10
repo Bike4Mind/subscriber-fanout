@@ -27,7 +27,9 @@ const fanout = new SubscriberFanout({
 });
 
 fanout.start().catch(error => {
-  console.error(error);
+  // Print only the stack: error objects from parsers can carry their raw
+  // input as a property, and here that input may be the connection string.
+  console.error(error instanceof Error ? error.stack ?? `${error.name}: ${error.message}` : String(error));
   process.exit(1);
 });
 

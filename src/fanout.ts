@@ -1,3 +1,4 @@
+import { describeConnectError, describeMongoUri } from './mongoUri.js';
 import mongoose, { AnyObject } from 'mongoose';
 import { IQuerySubscriptionDocument, QuerySubscription } from './querySubscription.js';
 import { credentialProviderChain, sendToConnection } from './websocket.js';
@@ -62,10 +63,14 @@ export class SubscriberFanout {
 
   async start() {
     const url = this.options.mongoUri.replace('%STAGE%', this.options.stage).replace('localhost', '127.0.0.1');
-    const u = new URL(url);
+    const target = describeMongoUri(url);
 
-    console.debug(`connecting to MongoDB at ${url.replace(`:${u.password}@`, ':***@')}`);
-    await mongoose.connect(url, { maxPoolSize: 2 });
+    console.debug(`connecting to MongoDB at ${target}`);
+    try {
+      await mongoose.connect(url, { maxPoolSize: 2 });
+    } catch (error) {
+      throw new Error(`failed to connect to MongoDB at ${target} (${describeConnectError(error, url)})`);
+    }
 
     console.debug(`connected to MongoDB`);
 
