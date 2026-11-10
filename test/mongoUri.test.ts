@@ -48,6 +48,7 @@ test('falls back to a placeholder when the string is not in the expected form', 
     'mongodb://user:p@secret/word@h/db',
     'mongodb://admin:Xk9@secret?f8@h/db',
     'user:secret@host/db',
+    'secret://user:secret@host/db',
   ];
   for (const uri of cases) {
     const out = describeMongoUri(uri);
@@ -61,12 +62,14 @@ test('scrubs the password from driver messages for a well-formed string', () => 
     ['mongodb://user:S3CRET@h/db', 'MongoParseError: something about "mongodb://user:S3CRET@h/db"'],
     ['mongodb://user:p%40ss@h/db', 'Password p@ss contains unescaped characters'],
     ['mongodb://user:TAIL:SECRET@h/db', 'Unable to parse TAIL:SECRET with URL'],
-    ['mongodb://user:abc@TAILSECRET@h/db', 'getaddrinfo ENOTFOUND tailsecret'],
+    ['mongodb://user:p w@h/db', 'invalid password "p%20w"'],
+    ['mongodb://h/db?authMechanismProperties=AWS_SESSION_TOKEN:SECRETTOK', 'option value SECRETTOK is invalid'],
+    ['mongodb://h/db?tlsCertificateKeyFilePassword=se%40cret', 'option se@cret is invalid'],
   ];
   for (const [uri, message] of cases) {
     const out = describeConnectError(new Error(message), uri);
     assert.ok(!out.toLowerCase().includes('secret'), `${uri}: ${out}`);
-    assert.ok(!out.includes('p@ss'), `${uri}: ${out}`);
+    assert.ok(!out.includes('p@ss') && !out.includes('p%20w') && !out.includes('se@cret'), `${uri}: ${out}`);
   }
 });
 
@@ -75,6 +78,7 @@ test('keeps only the error class when the string is not in the expected form', (
     ['mongodb://user:S3CRET@', 'Protocol and host list are required in "mongodb://user:S3CRET@"'],
     ['mongodb://user:S3CRET', 'Unable to parse user:S3CRET with URL'],
     ['mongodb://user:p@secret/word@h/db', 'getaddrinfo ENOTFOUND secret'],
+    ['mongodb://user:abc@TAILSECRET@h/db', 'getaddrinfo ENOTFOUND tailsecret'],
   ];
   for (const [uri, message] of cases) {
     const error = new Error(message);
