@@ -13,6 +13,7 @@
  * See DESIGN.md for more details.
  */
 
+import { describeConnectError, describeMongoUri } from './mongoUri.js';
 import mongoose, { AnyObject } from 'mongoose';
 import { IQuerySubscriptionDocument, QuerySubscription } from './querySubscription.js';
 import { credentialProviderChain, sendToConnection } from './websocket.js';
@@ -54,10 +55,15 @@ class SubscriberFanout {
     const mongoURI = process.env.MONGODB_URI || Resource.MONGODB_URI.value || 'mongodb://localhost:27017/bike4mind';
     const stage = process.env.STAGE || Resource.App.stage || 'development';
     const url = mongoURI.replace('%STAGE%', stage).replace('localhost', '127.0.0.1');
-    const u = new URL(url);
 
-    console.debug(`connecting to MongoDB at ${url.replace(`:${u.password}@`, ':***@')}`);
-    await mongoose.connect(url, { maxPoolSize: 2 });
+    const target = describeMongoUri(url);
+
+    console.debug(`connecting to MongoDB at ${target}`);
+    try {
+      await mongoose.connect(url, { maxPoolSize: 2 });
+    } catch (error) {
+      throw new Error(`failed to connect to MongoDB at ${target} (${describeConnectError(error, url)})`);
+    }
 
     console.debug(`connected to MongoDB`);
 
@@ -448,6 +454,8 @@ class SubscriberFanout {
 }
 
 new SubscriberFanout().start().catch(error => {
-  console.error(error);
+  // Print only the stack: error objects from parsers can carry their raw
+  // input as a property, and here that input may be the connection string.
+  console.error(error instanceof Error ? error.stack ?? `${error.name}: ${error.message}` : String(error));
   process.exit(1);
 });
