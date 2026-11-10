@@ -18,10 +18,12 @@ interface ParsedMongoUri {
 
 function spellings(piece: string): string[] {
   const out = [piece, encodeURIComponent(piece)];
-  try {
-    out.push(decodeURIComponent(piece));
-  } catch {
-    // not percent-encoded; the raw piece is already in the list
+  for (const form of [piece, piece.replace(/\+/g, ' ')]) {
+    try {
+      out.push(decodeURIComponent(form));
+    } catch {
+      // not percent-encoded; the raw piece is already in the list
+    }
   }
   return out;
 }

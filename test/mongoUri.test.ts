@@ -65,11 +65,12 @@ test('scrubs the password from driver messages for a well-formed string', () => 
     ['mongodb://user:p w@h/db', 'invalid password "p%20w"'],
     ['mongodb://h/db?authMechanismProperties=AWS_SESSION_TOKEN:SECRETTOK', 'option value SECRETTOK is invalid'],
     ['mongodb://h/db?tlsCertificateKeyFilePassword=se%40cret', 'option se@cret is invalid'],
+    ['mongodb://h/db?tlsCertificateKeyFilePassword=se+cret', 'option "se cret" is invalid'],
   ];
   for (const [uri, message] of cases) {
     const out = describeConnectError(new Error(message), uri);
     assert.ok(!out.toLowerCase().includes('secret'), `${uri}: ${out}`);
-    assert.ok(!out.includes('p@ss') && !out.includes('p%20w') && !out.includes('se@cret'), `${uri}: ${out}`);
+    assert.ok(!out.includes('p@ss') && !out.includes('p%20w') && !out.includes('se@cret') && !out.includes('se cret'), `${uri}: ${out}`);
   }
 });
 
