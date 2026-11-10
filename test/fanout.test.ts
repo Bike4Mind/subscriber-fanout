@@ -3,6 +3,10 @@ import assert from 'node:assert/strict';
 import mongoose from 'mongoose';
 import { MongoMemoryReplSet } from 'mongodb-memory-server';
 import { MAX_SEND_ATTEMPTS, SendFn, SubscriberFanout } from '../src/fanout.js';
+import { ChangeEvent, CollectionStream, Registration } from '../src/collectionStream.js';
+import { FanoutCursor } from '../src/fanoutCursor.js';
+import { buildSubscriptionFilter } from '../src/matcher.js';
+import { IQuerySubscriptionDocument } from '../src/querySubscription.js';
 import { IDataSubscriptionUpdateAction, IMessageDataToClient } from '../src/wireTypes.js';
 
 const { MongoClient, ObjectId } = mongoose.mongo;
@@ -471,5 +475,190 @@ describe('SubscriberFanout', () => {
     );
     assert.equal(instance.openStreamCount('mixed'), 1);
     assert.ok(r.sent.some(s => s.connectionId === 'alive' && s.message.action === 'pong'));
+  });
+
+  it('keeps old-stream semantics for null on a dotted path by matching it server-side', async t => {
+    const { name, db } = freshDb();
+    const r = recorder();
+    t.mock.method(console, 'warn', () => {});
+    const instance = await startFanout(name, r.send);
+    const id = await insertSubscription(db, {
+      collectionName: 'teams',
+      query: { 'members.deletedAt': null },
+      connectionIds: ['c1'],
+    });
+    await waitForSubscription(instance, id);
+    assert.equal(instance.dedicatedStreamCount(), 1);
+
+    await db.collection('teams').insertMany([
+      { name: 'all-deleted', members: [{ deletedAt: new Date() }] },
+      { name: 'one-active', members: [{ deletedAt: new Date() }, { name: 'x' }] },
+    ]);
+    await waitFor(() => r.updates('c1').length === 1, 'dotted-null delivery');
+    await new Promise(resolve => setTimeout(resolve, 300));
+    assert.deepEqual(
+      r.updates('c1').map(u => u.data.name),
+      ['one-active']
+    );
+  });
+
+  it('reopens the shared stream after the collection is dropped', async t => {
+    const { name, db } = freshDb();
+    const r = recorder();
+    t.mock.method(console, 'warn', () => {});
+    const instance = await startFanout(name, r.send);
+    const id = await insertSubscription(db, { collectionName: 'dropped', query: { tag: 'yes' }, connectionIds: ['c1'] });
+    await waitForSubscription(instance, id);
+
+    await db.collection('dropped').insertOne({ tag: 'yes', n: 1 });
+    await waitFor(() => r.updates('c1').length === 1, 'delivery before drop');
+    await db.collection('dropped').drop();
+    await new Promise(resolve => setTimeout(resolve, 1500));
+
+    await db.collection('dropped').insertOne({ tag: 'yes', n: 2 });
+    await waitFor(() => r.updates('c1').length === 2, 'delivery after drop');
+    assert.equal(r.updates('c1')[1].data.n, 2);
+    assert.equal(instance.openStreamCount('dropped'), 1);
+  });
+
+  it('restarts a startup-loaded dedicated stream after its resume token expires', async t => {
+    const { name, db } = freshDb();
+    const r = recorder();
+    t.mock.method(console, 'warn', () => {});
+    t.mock.method(console, 'error', () => {});
+    t.mock.method(console, 'log', () => {});
+    const id = await insertSubscription(db, {
+      collectionName: 'expiring',
+      query: { tag: 'yes', $comment: 'dedicated' },
+      connectionIds: ['c1'],
+    });
+    const instance = await startFanout(name, r.send);
+    const dedicated = (): mongoose.mongo.ChangeStream | undefined =>
+      (Reflect.get(instance, 'dedicatedStreams') as Map<string, mongoose.mongo.ChangeStream>).get(id);
+    const original = dedicated();
+    assert.ok(original);
+
+    original.emit('error', new Error('resume point may no longer be in the oplog'));
+    await waitFor(() => dedicated() !== undefined && dedicated() !== original, 'dedicated stream to reopen');
+    await new Promise(resolve => setTimeout(resolve, 300));
+
+    await db.collection('expiring').insertOne({ tag: 'yes' });
+    await waitFor(() => r.updates('c1').length === 1, 'delivery after reopen');
+  });
+});
+
+describe('CollectionStream', () => {
+  type Delivered = { subscriptionId: string; change: ChangeEvent };
+
+  function registration(query: Record<string, unknown>, overrides: Partial<Registration> = {}): Registration {
+    const subscription = { updatedAt: new Date(), query, fields: {} } as unknown as IQuerySubscriptionDocument;
+    return { ...buildSubscriptionFilter({ query }), subscription, ...overrides };
+  }
+
+  async function withConnection(run: (db: Db) => Promise<void>) {
+    const { name, db } = freshDb();
+    await mongoose.connect(rs.getUri(name));
+    try {
+      await run(db);
+    } finally {
+      await mongoose.disconnect();
+    }
+  }
+
+  const currentStream = (stream: CollectionStream) =>
+    Reflect.get(stream, 'stream') as mongoose.mongo.ChangeStream | undefined;
+
+  it('keeps delivering to other subscriptions when one projection throws', async t => {
+    t.mock.method(console, 'warn', () => {});
+    await withConnection(async db => {
+      const delivered: Delivered[] = [];
+      const stream = new CollectionStream('projections', (subscriptionId, change) => delivered.push({ subscriptionId, change }));
+      stream.register(
+        'broken',
+        registration(
+          {},
+          {
+            projector: () => {
+              throw new Error('bad projection');
+            },
+          }
+        )
+      );
+      stream.register('healthy', registration({}));
+      await stream.open();
+      await db.collection('projections').insertOne({ n: 1 });
+      await waitFor(() => delivered.length === 1, 'healthy delivery');
+      assert.equal(delivered[0].subscriptionId, 'healthy');
+      await stream.close('idle');
+    });
+  });
+
+  it('resets the retry budget after a clean reopen', async t => {
+    t.mock.method(console, 'error', () => {});
+    t.mock.method(console, 'info', () => {});
+    await withConnection(async db => {
+      const delivered: Delivered[] = [];
+      const onFatal = t.mock.fn();
+      const stream = new CollectionStream('flaky', (subscriptionId, change) => delivered.push({ subscriptionId, change }), {
+        onFatal,
+        reopenDelayMs: 10,
+      });
+      stream.register('s1', registration({}));
+      await stream.open();
+
+      for (let attempt = 0; attempt < 8; attempt++) {
+        const before = currentStream(stream);
+        assert.ok(before);
+        before.emit('error', new Error('transient network error'));
+        await waitFor(() => currentStream(stream) !== undefined && currentStream(stream) !== before, 'reopen');
+        await waitFor(() => Reflect.get(stream, 'retries') === 0, 'clean init');
+      }
+      assert.equal(onFatal.mock.callCount(), 0);
+
+      await db.collection('flaky').insertOne({ n: 1 });
+      await waitFor(() => delivered.length === 1, 'delivery after reopens');
+      await stream.close('idle');
+    });
+  });
+
+  it('does not retry the expired start position after the token expires', async t => {
+    t.mock.method(console, 'error', () => {});
+    t.mock.method(console, 'log', () => {});
+    t.mock.method(console, 'info', () => {});
+    await withConnection(async () => {
+      const stream = new CollectionStream('expired', () => {}, { reopenDelayMs: 10 });
+      stream.register('s1', registration({}));
+      await stream.open();
+      assert.ok('startAtOperationTime' in (Reflect.get(stream, 'initialStart') as object));
+
+      const before = currentStream(stream);
+      before?.emit('error', new Error('Resume of change stream was not possible, as the resume point may no longer be in the oplog.'));
+      await waitFor(() => currentStream(stream) !== undefined && currentStream(stream) !== before, 'live reopen');
+      assert.deepEqual(Reflect.get(stream, 'initialStart'), {});
+      await stream.close('idle');
+    });
+  });
+
+  it('leaves no cursor behind when it closes idle with a token write in flight', async t => {
+    t.mock.method(console, 'info', () => {});
+    await withConnection(async db => {
+      const delivered: Delivered[] = [];
+      const stream = new CollectionStream('idleClose', (subscriptionId, change) => delivered.push({ subscriptionId, change }));
+      stream.register('s1', registration({}));
+      await stream.open();
+      await db.collection('idleClose').insertOne({ n: 1 });
+      await waitFor(() => delivered.length === 1, 'delivery');
+
+      const persist = Reflect.get(stream, 'persistToken') as () => Promise<void>;
+      void persist.call(stream);
+      await stream.close('idle');
+      assert.equal(await FanoutCursor.countDocuments({ collectionName: 'idleClose' }), 0);
+
+      // A late event after close must neither deliver nor re-arm the token write.
+      const handleChange = Reflect.get(stream, 'handleChange') as (change: unknown) => void;
+      handleChange.call(stream, delivered[0].change);
+      assert.equal(delivered.length, 1);
+      assert.equal(Reflect.get(stream, 'persistTimer'), undefined);
+    });
   });
 });

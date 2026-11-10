@@ -92,10 +92,9 @@ describe('buildMatcher', () => {
     assert.equal(buildMatcher({ userId: id })(normalizeBson({ fullDocument: { userId: `o:${id.toHexString()}` } })), false);
   });
 
-  it('keeps string comparison and ordering operators working', () => {
+  it('keeps string equality and set operators working', () => {
     const event = normalizeBson({ fullDocument: { name: 'bob', tags: ['x', 'y'] } });
     assert.equal(buildMatcher({ name: { $in: ['bob', 'eve'] } })(event), true);
-    assert.equal(buildMatcher({ name: { $gt: 'alice', $lt: 'carol' } })(event), true);
     assert.equal(buildMatcher({ name: { $ne: 'bob' } })(event), false);
     assert.equal(buildMatcher({ tags: { $all: ['x', 'y'] } })(event), true);
     assert.equal(buildMatcher({ tags: 'y' })(event), true);
@@ -122,6 +121,66 @@ describe('buildMatcher', () => {
   it('sends $type to the dedicated stream, since ObjectIds are strings once normalised', () => {
     assert.throws(() => buildMatcher({ owner: { $type: 'objectId' } }), /\$type/);
     assert.throws(() => buildMatcher({ $or: [{ owner: { $type: 'string' } }] }), /\$type/);
+  });
+});
+
+describe('buildMatcher in-process classifier', () => {
+  const matches = (query: Record<string, unknown>, fullDocument: Record<string, unknown>) =>
+    buildMatcher(query)(normalizeBson({ operationType: 'insert', fullDocument }));
+
+  it('sends operators outside the allowlist to the dedicated stream', () => {
+    assert.throws(() => buildMatcher({ loc: { $geoWithin: { $centerSphere: [[0, 0], 1] } } }), /\$geoWithin/);
+    assert.throws(
+      () => buildMatcher({ items: { $all: [{ $elemMatch: { loc: { $geoWithin: { $box: [[0, 0], [1, 1]] } } } }] } }),
+      /\$geoWithin/
+    );
+    assert.throws(() => buildMatcher({ flags: { $bitsAllSet: 3 } }), /\$bitsAllSet/);
+    assert.throws(() => buildMatcher({ $comment: 'x' }), /\$comment/);
+    assert.throws(() => buildMatcher({ name: { $not: { $regex: 'a' } } }), /\$regex/);
+  });
+
+  it('sends null under a dotted path to the dedicated stream, keeps top-level null in process', () => {
+    assert.throws(() => buildMatcher({ 'members.deletedAt': null }), /null under a dotted path/);
+    assert.throws(() => buildMatcher({ 'a.b': { $ne: null } }), /null under a dotted path/);
+    assert.throws(() => buildMatcher({ 'a.b': { $in: [null, 1] } }), /null under a dotted path/);
+    assert.throws(() => buildMatcher({ members: { $elemMatch: { 'a.b': null } } }), /null under a dotted path/);
+    assert.equal(matches({ deletedAt: null }, {}), true);
+    assert.equal(matches({ deletedAt: null }, { deletedAt: new Date() }), false);
+    assert.equal(matches({ deletedAt: { $ne: null } }, {}), false);
+    assert.equal(matches({ tags: null }, { tags: [1, null] }), true);
+    assert.equal(matches({ members: { $elemMatch: { deletedAt: null } } }, { members: [{ deletedAt: 1 }, { n: 1 }] }), true);
+  });
+
+  it('orders only numbers and Dates in process', () => {
+    assert.throws(() => buildMatcher({ name: { $gt: 'alice' } }), /\$gt on a non-number/);
+    assert.throws(() => buildMatcher({ owner: { $lt: new ObjectId() } }), /\$lt on a non-number/);
+    assert.throws(() => buildMatcher({ n: { $gte: null } }), /\$gte on a non-number/);
+    assert.equal(matches({ n: { $gt: 1, $lte: new Int32(3) } }, { n: 2 }), true);
+    assert.equal(matches({ at: { $gte: new Date(1000) } }, { at: new Date(2000) }), true);
+    assert.equal(matches({ at: { $gte: new Date(3000) } }, { at: new Date(2000) }), false);
+  });
+
+  it('sends Long, Decimal128 and other BSON operands to the dedicated stream', () => {
+    assert.throws(() => buildMatcher({ n: Long.fromString('9007199254740993') }), /Long operand/);
+    assert.throws(() => buildMatcher({ p: { $in: [Decimal128.fromString('1.0')] } }), /Decimal128 operand/);
+    assert.throws(() => buildMatcher({ b: new Binary(Buffer.from('x')) }), /Binary operand/);
+  });
+
+  it('sends embedded document equality and arrays inside $in/$nin to the dedicated stream', () => {
+    assert.throws(() => buildMatcher({ a: { x: 1, y: 2 } }), /embedded document equality/);
+    assert.throws(() => buildMatcher({ a: { $ne: { x: 1 } } }), /embedded document equality/);
+    assert.throws(() => buildMatcher({ tags: { $in: [['x', 'y']] } }), /array inside \$in/);
+    assert.throws(() => buildMatcher({ tags: { $nin: [['x']] } }), /array inside \$nin/);
+    assert.equal(matches({ tags: ['x', 'y'] }, { tags: ['x', 'y'] }), true);
+    assert.equal(matches({ tags: { $all: [{ $elemMatch: { $gt: 1 } }] } }, { tags: [0, 2] }), true);
+  });
+
+  it('keeps ObjectId equality, $and/$or/$nor and $elemMatch in process', () => {
+    const id = new ObjectId();
+    assert.equal(matches({ $or: [{ userId: id }, { shared: true }] }, { userId: id }), true);
+    assert.equal(matches({ $nor: [{ userId: id }] }, { userId: id }), false);
+    assert.equal(matches({ items: { $elemMatch: { owner: id, n: { $gt: 1 } } } }, { items: [{ owner: id, n: 2 }] }), true);
+    assert.equal(matches({ n: { $mod: [2, 1] }, tags: { $size: 1 }, x: { $exists: false } }, { n: 3, tags: ['a'] }), true);
   });
 });
 

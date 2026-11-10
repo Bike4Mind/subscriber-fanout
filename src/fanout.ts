@@ -69,8 +69,10 @@ export class SubscriberFanout {
 
     console.debug(`connected to MongoDB`);
 
+    // Plain objects, like the ones built from change events: spreading a hydrated
+    // document (as the dedicated-stream restart does) would drop its fields.
     for (const subscription of await QuerySubscription.find()) {
-      await this.addSubscription(subscription, { deferOpen: true });
+      await this.addSubscription({ ...subscription.toObject(), id: subscription.id }, { deferOpen: true });
     }
     await FanoutCursor.deleteMany({ collectionName: { $nin: [...this.streamsByCollection.keys()] } });
     await Promise.all([...this.streamsByCollection.values()].map(stream => stream.open()));

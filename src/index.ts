@@ -18,15 +18,27 @@ import { SubscriberFanout } from './fanout.js';
 
 const stage = process.env.STAGE || Resource.App.stage || 'development';
 
-new SubscriberFanout({
+const fanout = new SubscriberFanout({
   mongoUri: process.env.MONGODB_URI || Resource.MONGODB_URI.value || 'mongodb://localhost:27017/bike4mind',
   stage,
   // Prefer an explicit env var (self-host / plain Docker); fall back to the
   // SST-linked Resource (AWS deploy).
   managementEndpoint: process.env.WEBSOCKET_MANAGEMENT_ENDPOINT || Resource.websocket.managementEndpoint,
-})
-  .start()
-  .catch(error => {
-    console.error(error);
-    process.exit(1);
+});
+
+fanout.start().catch(error => {
+  console.error(error);
+  process.exit(1);
+});
+
+// Flush resume tokens on a deploy or scale-in so the next task resumes where
+// this one stopped instead of up to one persist interval earlier.
+for (const signal of ['SIGTERM', 'SIGINT'] as const) {
+  process.once(signal, () => {
+    console.info(`${signal} received, shutting down`);
+    fanout
+      .stop()
+      .catch(error => console.error('shutdown failed:', error))
+      .finally(() => process.exit(0));
   });
+}

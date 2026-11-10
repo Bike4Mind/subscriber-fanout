@@ -55,7 +55,8 @@ function setOwn(target: Record<string, unknown>, key: string, value: unknown) {
 // mingo compares by value on plain JS types only, so BSON wrappers have to be
 // unwrapped on both the query and the event for equality to behave like Mongo.
 // Strings and ObjectIds get distinct prefixes so no document value can collide
-// with an ObjectId operand; the prefix is constant, so string ordering holds.
+// with an ObjectId operand. Both end up as JS strings, so ordering comparisons
+// against them are left to the server (see assertCondition).
 export function normalizeBson(value: unknown): unknown {
   if (typeof value === 'string') return `s:${value}`;
   if (value === null || typeof value !== 'object') return value;
@@ -102,31 +103,125 @@ function clonePlain(value: unknown): unknown {
   return copy;
 }
 
-// Server-side JS and regular expressions stay on the server: a regex here would
-// run on the event loop for every change, and $where would execute in process.
-// $type is answered against normalised values, where an ObjectId is a string.
-const SERVER_ONLY_OPERATORS = new Set([
-  '$regex',
-  '$options',
-  '$where',
-  '$expr',
-  '$function',
-  '$jsonSchema',
-  '$text',
-  '$type',
+// Only operators whose mingo semantics match Mongo's for the operands allowed
+// below are evaluated in process; everything else ($regex, $where, $expr, $type,
+// geo, bitwise, $comment, anything unknown) keeps a dedicated server-side stream.
+// An allowlist, because a new or rare operator should fall back, not mismatch.
+const IN_PROCESS_OPERATORS = new Set([
+  '$eq',
+  '$ne',
+  '$gt',
+  '$gte',
+  '$lt',
+  '$lte',
+  '$in',
+  '$nin',
+  '$exists',
+  '$size',
+  '$all',
+  '$elemMatch',
+  '$not',
+  '$mod',
 ]);
+const RANGE_OPERATORS = new Set(['$gt', '$gte', '$lt', '$lte']);
 
-function assertEvaluableInProcess(value: unknown, path = ''): void {
-  if (value instanceof RegExp) throw new Error(`regular expression at ${path || '<root>'} is matched server-side`);
+function serverSide(reason: string, path: string): never {
+  throw new Error(`${reason} at ${path || '<root>'} is matched server-side`);
+}
+
+function bsonType(value: unknown): string | undefined {
+  return value !== null && typeof value === 'object' ? (value as { _bsontype?: string })._bsontype : undefined;
+}
+
+function isNumberLike(value: unknown) {
+  const type = bsonType(value);
+  return typeof value === 'number' || type === 'Int32' || type === 'Double';
+}
+
+function isOperatorObject(value: unknown): value is Record<string, unknown> {
+  if (!isPlainContainer(value)) return false;
+  const keys = Object.keys(value);
+  return keys.length > 0 && keys.every(key => key.startsWith('$'));
+}
+
+// A value compared for equality. Mongo compares embedded documents field-order
+// sensitively and Long/Decimal128 exactly, and mingo does neither; normalised
+// ObjectIds and strings are both JS strings, so only equality is safe for them.
+function assertOperand(value: unknown, path: string, underDottedPath: boolean): void {
+  if (value instanceof RegExp) serverSide('regular expression', path);
+  // On a dotted path through an array of documents, Mongo matches null when any
+  // element lacks the field; mingo does not.
+  if (value === null && underDottedPath) serverSide('null under a dotted path', path);
   if (Array.isArray(value)) {
-    value.forEach((item, i) => assertEvaluableInProcess(item, `${path}[${i}]`));
+    value.forEach((item, i) => assertOperand(item, `${path}[${i}]`, underDottedPath));
     return;
   }
-  if (!isPlainContainer(value)) return;
-  for (const [key, inner] of Object.entries(value)) {
-    if (SERVER_ONLY_OPERATORS.has(key)) throw new Error(`${key} at ${path || '<root>'} is matched server-side`);
-    assertEvaluableInProcess(inner, path ? `${path}.${key}` : key);
+  if (isPlainContainer(value)) serverSide('embedded document equality', path);
+  const type = bsonType(value);
+  if (type !== undefined && type !== 'ObjectId' && type !== 'ObjectID' && type !== 'Int32' && type !== 'Double') {
+    serverSide(`${type} operand`, path);
   }
+}
+
+function assertCondition(condition: unknown, path: string, underDottedPath: boolean): void {
+  if (!isOperatorObject(condition)) {
+    assertOperand(condition, path, underDottedPath);
+    return;
+  }
+  for (const [operator, operand] of Object.entries(condition)) {
+    if (!IN_PROCESS_OPERATORS.has(operator)) serverSide(operator, path);
+    switch (operator) {
+      case '$not':
+        assertCondition(operand, path, underDottedPath);
+        break;
+      case '$elemMatch':
+        if (isOperatorObject(operand)) assertCondition(operand, path, underDottedPath);
+        else if (isPlainContainer(operand)) assertFilter(operand, path, underDottedPath);
+        else serverSide('$elemMatch operand', path);
+        break;
+      case '$in':
+      case '$nin':
+      case '$all':
+        if (!Array.isArray(operand)) serverSide(`${operator} operand`, path);
+        operand.forEach((item, i) => {
+          if (operator === '$all' && isOperatorObject(item)) assertCondition(item, path, underDottedPath);
+          // An array element is whole-array equality in Mongo, element-wise in mingo.
+          else if (Array.isArray(item)) serverSide(`array inside ${operator}`, `${path}[${i}]`);
+          else assertOperand(item, `${path}[${i}]`, underDottedPath);
+        });
+        break;
+      case '$exists':
+        break;
+      default:
+        // Mongo brackets ordering by BSON type and orders strings by UTF-8 bytes;
+        // mingo does neither, so only numbers and Dates are ordered in process.
+        if (RANGE_OPERATORS.has(operator) && !isNumberLike(operand) && !(operand instanceof Date)) {
+          serverSide(`${operator} on a non-number, non-Date operand`, path);
+        }
+        assertOperand(operand, path, underDottedPath);
+    }
+  }
+}
+
+function assertFilter(filter: Record<string, unknown>, basePath: string, underDottedPath: boolean): void {
+  for (const [key, value] of Object.entries(filter)) {
+    const path = basePath ? `${basePath}.${key}` : key;
+    if (key === '$and' || key === '$or' || key === '$nor') {
+      if (!Array.isArray(value)) serverSide(`${key} operand`, path);
+      value.forEach(item => {
+        if (!isPlainContainer(item)) serverSide(`${key} operand`, path);
+        assertFilter(item, basePath, underDottedPath);
+      });
+    } else if (key.startsWith('$')) {
+      serverSide(key, path);
+    } else {
+      assertCondition(value, path, underDottedPath || key.includes('.'));
+    }
+  }
+}
+
+function assertEvaluableInProcess(query: Record<string, unknown>): void {
+  assertFilter(query, '', false);
 }
 
 export function buildMatcher(query: Record<string, unknown>): Matcher {
