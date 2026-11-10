@@ -23,7 +23,7 @@ Thinking through the subscription lifecycle:
 - Client makes a websocket request which goes to a Lambda Function, `subscribe_query`, to arrange the subscription
 - This function queries for the query requested, then associates a normalized form of the query with destination socket ID.  There may be multiple subscribers to the same query.  These associations are stored in MongoDB itself.
 - Our long-running process monitors mongo's querySubscriptions collection for new queries to monitor, and as they're added/created, our process begins monitoring them.  Initially, it monitors all queries, but in the future we may provide a load-balancing mechanism between multiple instances of our long-running process.
-- Having subscribed to the query of interest, the long-running process receives updates and dispatches them to subscribers.
+- Having subscribed to the query of interest, the long-running process receives updates and dispatches them to subscribers.  It opens one change stream per collection rather than per query (each stream costs the server a full oplog scan), and matches each change against every query on that collection in process with `mingo`.  A query using an operator or operand outside the in-process allowlist (see `src/matcher.ts`), or one `mingo` cannot compile, falls back to a dedicated per-query stream.
 - As it does so, if any of the subscribers have disconnected and throws an error, we remove it from the subscription list.  Once the subscription list becomes empty, we drop the subscription.
 
 ## Q&A

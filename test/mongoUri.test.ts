@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { describeConnectError, describeMongoUri } from '../src/mongoUri.ts';
+import { describeConnectError, describeMongoUri } from '../src/mongoUri.js';
 
 const passwords = ['p=w;d|x y', 'pässwörd', 'p%40ss', 'плохой пароль'];
 
