@@ -33,7 +33,10 @@ function fragments(password: string, query: string): string[] {
   }
   for (const pair of query.split('&')) {
     const value = pair.slice(pair.indexOf('=') + 1);
-    if (value) spellings(value).forEach(v => out.add(v));
+    // authMechanismProperties packs KEY:VALUE pairs into one option value
+    for (const piece of [value, ...value.split(/[:,]/)]) {
+      if (piece) spellings(piece).forEach(v => out.add(v));
+    }
   }
   return [...out].sort((a, b) => b.length - a.length);
 }
