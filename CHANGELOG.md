@@ -22,6 +22,9 @@ Change streams are now opened per collection instead of per query subscription, 
 - **Dependency `mingo` (`^7.2.7`)**, MIT, no transitive deps.
 - **Tests**: `pnpm test` runs unit and `mongodb-memory-server` integration tests; CI runs them after Typecheck.
 
+### Security
+- Bump mongoose to 7.8.13 and ip-address to 10.7.6; remove unused zod.
+
 ### Notes for consumers
 - **Wire protocol**: unchanged.
 - **Database**: the service now reads and writes `subscriberFanoutCursors`; the task's Mongo user needs write access to it.

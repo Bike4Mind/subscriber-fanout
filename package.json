@@ -31,10 +31,9 @@
     "flat": "^6.0.1",
     "lodash-es": "^4.18.1",
     "mingo": "^7.2.7",
-    "mongoose": "^7.8.10",
+    "mongoose": "^7.8.13",
     "p-limit": "^5.0.0",
-    "sst": "4.1.10",
-    "zod": "^4.3.6"
+    "sst": "4.1.10"
   },
   "devDependencies": {
     "@types/lodash-es": "^4.17.12",
