@@ -10,6 +10,7 @@ import { Mutex } from 'async-mutex';
 import { CollectionStream, isResumeExpiredError, waitForStreamInit } from './collectionStream.js';
 import { FanoutCursor } from './fanoutCursor.js';
 import { SubscriptionFilter, buildSubscriptionFilter, transformAndPrefixQuery } from './matcher.js';
+import { organizationMfaDeliveryAllowed } from './organizationMfa.js';
 
 export const MAX_SEND_ATTEMPTS = 3;
 
@@ -411,6 +412,8 @@ export class SubscriberFanout {
     const promises = zip(subscribers, payloads).map(async ([subscriber, message]) => {
       // Can't happen (zip pairs them 1:1), but keeps the type-checker happy.
       if (!subscriber || !message) return;
+      if (message.action === 'data_update' && message.operationType !== 'delete' &&
+        !(await organizationMfaDeliveryAllowed(subscriber.connectionId, message.collectionName, message.data._id))) return;
       return await this.send(subscriber.connectionId, subscriber.endpoint, message);
     });
 

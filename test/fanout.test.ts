@@ -8,6 +8,7 @@ import { FanoutCursor } from '../src/fanoutCursor.js';
 import { buildSubscriptionFilter } from '../src/matcher.js';
 import { IQuerySubscriptionDocument } from '../src/querySubscription.js';
 import { IDataSubscriptionUpdateAction, IMessageDataToClient } from '../src/wireTypes.js';
+import { organizationMfaDeliveryAllowed } from '../src/organizationMfa.js';
 
 const { MongoClient, ObjectId } = mongoose.mongo;
 type Db = mongoose.mongo.Db;
@@ -116,6 +117,27 @@ after(async () => {
 });
 
 describe('SubscriberFanout', () => {
+  it('rechecks organization MFA per recipient while preserving personal delivery', async () => {
+    const { name, db } = freshDb();
+    const r = recorder();
+    const instance = await startFanout(name, r.send);
+    const userId = new ObjectId();
+    const orgId = new ObjectId();
+    await db.collection('users').insertOne({ _id: userId, mfa: { totpEnabled: false } });
+    await db.collection('connections').insertOne({ connectionId: 'mfa', userId: String(userId) });
+    await db.collection('organizations').insertOne({ _id: orgId, mfaPolicy: { required: true, enforceAfter: new Date(0) } });
+    const id = await insertSubscription(db, { collectionName: 'projects', query: {}, connectionIds: ['mfa'] });
+    await waitForSubscription(instance, id);
+    const bound = await db.collection('projects').insertOne({ organizationId: String(orgId), name: 'bound' });
+    assert.equal(await organizationMfaDeliveryAllowed('mfa', 'projects', bound.insertedId), false);
+    await db.collection('projects').insertOne({ name: 'personal' });
+    await waitFor(() => r.updates('mfa').length === 1, 'personal delivery');
+    assert.equal(r.updates('mfa')[0].data.name, 'personal');
+    await db.collection('users').updateOne({ _id: userId }, { $set: { 'mfa.totpEnabled': true } });
+    await db.collection('projects').updateOne({ _id: bound.insertedId }, { $set: { name: 'enrolled' } });
+    await waitFor(() => r.updates('mfa').some(update => update.data.name === 'enrolled'), 'enrolled delivery');
+  });
+
   it('delivers inserts, updates and soft deletes with fields excluded', async () => {
     const { name, db } = freshDb();
     const r = recorder();
