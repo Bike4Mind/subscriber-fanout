@@ -130,13 +130,11 @@ describe('buildMatcher in-process classifier', () => {
 
   it('sends operators outside the allowlist to the dedicated stream', () => {
     assert.throws(() => buildMatcher({ loc: { $geoWithin: { $centerSphere: [[0, 0], 1] } } }), /\$geoWithin/);
-    assert.throws(
-      () => buildMatcher({ items: { $all: [{ $elemMatch: { loc: { $geoWithin: { $box: [[0, 0], [1, 1]] } } } }] } }),
-      /\$geoWithin/
-    );
+    assert.throws(() => buildMatcher({ items: { $elemMatch: { loc: { $geoWithin: { $box: [[0, 0], [1, 1]] } } } } }), /\$geoWithin/);
     assert.throws(() => buildMatcher({ flags: { $bitsAllSet: 3 } }), /\$bitsAllSet/);
     assert.throws(() => buildMatcher({ $comment: 'x' }), /\$comment/);
     assert.throws(() => buildMatcher({ name: { $not: { $regex: 'a' } } }), /\$regex/);
+    assert.throws(() => buildMatcher({ n: { $mod: [2, 1] } }), /\$mod/);
   });
 
   it('sends null under a dotted path to the dedicated stream, keeps top-level null in process', () => {
@@ -172,7 +170,7 @@ describe('buildMatcher in-process classifier', () => {
     assert.throws(() => buildMatcher({ tags: { $in: [['x', 'y']] } }), /array inside \$in/);
     assert.throws(() => buildMatcher({ tags: { $nin: [['x']] } }), /array inside \$nin/);
     assert.equal(matches({ tags: ['x', 'y'] }, { tags: ['x', 'y'] }), true);
-    assert.equal(matches({ tags: { $all: [{ $elemMatch: { $gt: 1 } }] } }, { tags: [0, 2] }), true);
+    assert.throws(() => buildMatcher({ tags: { $all: [{ $elemMatch: { $gt: 1 } }] } }), /operator inside \$all/);
   });
 
   it('keeps ObjectId equality, $and/$or/$nor and $elemMatch in process', () => {
@@ -180,7 +178,7 @@ describe('buildMatcher in-process classifier', () => {
     assert.equal(matches({ $or: [{ userId: id }, { shared: true }] }, { userId: id }), true);
     assert.equal(matches({ $nor: [{ userId: id }] }, { userId: id }), false);
     assert.equal(matches({ items: { $elemMatch: { owner: id, n: { $gt: 1 } } } }, { items: [{ owner: id, n: 2 }] }), true);
-    assert.equal(matches({ n: { $mod: [2, 1] }, tags: { $size: 1 }, x: { $exists: false } }, { n: 3, tags: ['a'] }), true);
+    assert.equal(matches({ tags: { $size: 1 }, x: { $exists: false } }, { n: 3, tags: ['a'] }), true);
   });
 });
 
