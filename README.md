@@ -12,15 +12,7 @@ See [DESIGN.md](./DESIGN.md) for the architectural rationale.
 
 ## What it does
 
-Watches MongoDB change streams and pushes matching document changes to WebSocket
-clients. A client subscribes to a Mongo query through its app's `subscribe_query`
-WebSocket route (which records the subscription in the `querySubscriptions`
-collection); this service opens one change stream per watched collection,
-evaluates every subscription's query against each change in process, and pushes
-each matching change back to subscribers by `POST`ing to the WebSocket
-management endpoint (the API Gateway Management API `@connections/{id}` shape).
-Each collection's resume position is kept in the `subscriberFanoutCursors`
-collection so a restart picks up where the previous process stopped.
+Watches MongoDB change streams and pushes matching document changes to WebSocket clients. A client subscribes to a Mongo query through its app's `subscribe_query` WebSocket route (which records the subscription in the `querySubscriptions` collection); this service opens one change stream per watched collection, evaluates each subscription's query against each change in process, or on a dedicated server-side change stream for a query the in-process matcher cannot evaluate exactly as MongoDB would, and pushes each matching change back to subscribers by `POST`ing to the WebSocket management endpoint (the API Gateway Management API `@connections/{id}` shape), and closes a connection that falls too far behind with a `DELETE` there. Each collection's resume position is kept in the `subscriberFanoutCursors` collection so a restart picks up where the previous process stopped.
 
 The management endpoint is **API Gateway** in an AWS deployment, or a **local
 gateway that emulates that shape** in a self-host deployment - the fanout code is
@@ -117,11 +109,16 @@ absent (AWS). Set the env vars for self-host; leave them unset under SST.
 | Stage name (substitution + logging) | `STAGE` | `Resource.App.stage` |
 | WebSocket management endpoint to push to | `WEBSOCKET_MANAGEMENT_ENDPOINT` | `Resource.websocket.managementEndpoint` |
 | Send frames whole (no 128 KB chunking) | `WEBSOCKET_DISABLE_CHUNKING=true` | - (chunking on) |
+| Mongo connection pool size; keep it above the number of open change streams | `MONGODB_MAX_POOL_SIZE` | - (100) |
+| POSTs in flight to the gateway at once | `WEBSOCKET_SEND_CONCURRENCY` | - (64) |
+
+Memory: deliveries are held to a budget of a third of the heap left once the subscriptions are loaded, between 16 MB and 256 MB. Give the heap a limit of at least what it holds after startup plus three times the budget, and the container about twice the heap limit: at about 10.6 KB per subscription, 20k subscriptions at a 16 MB budget need about a 600 MB container. The startup log reports the budget and the heap per subscription, and logs an error naming the heap limit needed when the heap is short of that, including when the budget is set with the `maxQueuedBytes` option. See [DESIGN.md](./DESIGN.md#delivery-and-memory).
 
 AWS credentials are resolved from the standard chain (ECS -> instance -> env ->
 shared file). In self-host, dummy `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`
 satisfy the SDK; the local gateway ignores the SigV4 signature. Under SST, the
-ECS task role needs `execute-api:ManageConnections`.
+ECS task role needs `execute-api:ManageConnections` for `POST` and `DELETE` on
+`@connections/*`.
 
 ## Wire contract
 
