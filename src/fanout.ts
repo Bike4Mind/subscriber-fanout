@@ -45,6 +45,8 @@ export class SubscriberFanout {
 
   private subscriptionWatcher?: mongoose.mongo.ChangeStream<IQuerySubscriptionDocument>;
   private pingTimer?: NodeJS.Timeout;
+  // Idle closes still deleting their cursor; stop() waits for them before disconnecting.
+  private idleCloses: Set<Promise<void>> = new Set();
 
   // Subscribers whose stored endpoint no longer matches are stale and get dropped.
   private managementEndpoint: string;
@@ -104,6 +106,7 @@ export class SubscriberFanout {
     this.dedicatedStreams.clear();
     this.subscriptionCollections.clear();
     this.subscribers.clear();
+    await Promise.all([...this.idleCloses].map(closing => closing.catch(() => null)));
     await mongoose.disconnect();
   }
 
@@ -317,7 +320,9 @@ export class SubscriberFanout {
     const stream = this.streamsByCollection.get(collectionName);
     if (stream && stream.unregister(subscriptionId) === 0) {
       this.streamsByCollection.delete(collectionName);
-      await stream.close('idle');
+      const closing = stream.close('idle').finally(() => this.idleCloses.delete(closing));
+      this.idleCloses.add(closing);
+      await closing;
     }
   }
 
