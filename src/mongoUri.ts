@@ -5,7 +5,8 @@
 // The query string is dropped because its options can carry secrets too.
 
 const SCHEME = /^mongodb(\+srv)?$/i;
-const HOST = /^(\[[0-9A-Fa-f:.]+\]|[A-Za-z0-9._-]+)(:\d{1,5})?$/;
+// A unix socket path is percent-encoded and must end in .sock.
+const HOST = /^(\[[0-9A-Fa-f:.]+\]|[A-Za-z0-9._-]+|%2[Ff][A-Za-z0-9._~%-]*\.sock)(:\d{1,5})?$/;
 const DATABASE = /^\/[A-Za-z0-9._-]*$/;
 
 interface ParsedMongoUri {
@@ -106,15 +107,12 @@ function escapeRegExp(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-// Driver and parser errors quote parts of the connection string in their
-// messages. For a well-formed string the username, password and query option
-// values are scrubbed out (see MIN_UNBOUNDED_FRAGMENT_LENGTH); for anything else
-// the message is dropped and only the class kept, because a malformed string can
-// surface anywhere in it.
+// Errors can quote any part of the connection string. Only a non-parse error on a
+// well-formed string keeps its message, with the secrets scrubbed out.
 export function describeConnectError(error: unknown, uri: string): string {
   if (!(error instanceof Error)) return 'unknown error';
   const parsed = parseMongoUri(uri);
-  if (!parsed.wellFormed) return error.name;
+  if (!parsed.wellFormed || error.name === 'MongoParseError') return error.name;
 
   let message = error.message.split(uri).join('***');
   for (const fragment of parsed.secretFragments) {

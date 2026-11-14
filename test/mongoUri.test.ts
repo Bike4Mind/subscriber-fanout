@@ -102,13 +102,20 @@ test('leaves diagnostics readable when the password is short or absent', () => {
   assert.equal(describeConnectError('boom', 'mongodb://h/db'), 'unknown error');
 });
 
-test('scrubs the username the driver echoes for unescaped characters', () => {
-  // mongodb-connection-string-url quotes the raw username in this message.
-  const uri = 'mongodb://svc[tok]:pw@h1:27017/db';
-  const error = Object.assign(new Error('Username contains unescaped characters svc[tok]'), { name: 'MongoParseError' });
-  const out = describeConnectError(error, uri);
-  assert.ok(!out.includes('svc[tok]'), out);
-  assert.ok(out.startsWith('MongoParseError: '), out);
+test('keeps only the class of a parse error, whose message can quote any part of a secret', () => {
+  const cases: [string, string][] = [
+    ['mongodb://svc[tok]:pw@h1:27017/db', 'Username contains unescaped characters svc[tok]'],
+    ['mongodb://h1/db?tlsCertificateKeyFilePassword=ab&cd=ef', 'option cd is not supported'],
+  ];
+  for (const [uri, message] of cases) {
+    const error = Object.assign(new Error(message), { name: 'MongoParseError' });
+    assert.equal(describeConnectError(error, uri), 'MongoParseError');
+  }
+});
+
+test('shows a unix socket host and hides the credentials', () => {
+  assert.equal(describeMongoUri('mongodb://u:pw@%2Ftmp%2Fmongodb-27017.sock/db?authSource=admin'), 'mongodb://***:***@%2Ftmp%2Fmongodb-27017.sock/db');
+  assert.equal(describeMongoUri('mongodb://%2fvar%2frun%2Fm.sock'), 'mongodb://%2fvar%2frun%2Fm.sock');
 });
 
 test('scrubs a secret even when punctuation or word characters touch it', () => {
