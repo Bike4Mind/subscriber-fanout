@@ -24,6 +24,8 @@ const fanout = new SubscriberFanout({
   // Prefer an explicit env var (self-host / plain Docker); fall back to the
   // SST-linked Resource (AWS deploy).
   managementEndpoint: process.env.WEBSOCKET_MANAGEMENT_ENDPOINT || Resource.websocket.managementEndpoint,
+  maxPoolSize: Number(process.env.MONGODB_MAX_POOL_SIZE) || undefined,
+  sendConcurrency: Number(process.env.WEBSOCKET_SEND_CONCURRENCY) || undefined,
 });
 
 fanout.start().catch(error => {
@@ -33,8 +35,8 @@ fanout.start().catch(error => {
   process.exit(1);
 });
 
-// Flush resume tokens on a deploy or scale-in so the next task resumes where
-// this one stopped instead of up to one persist interval earlier.
+// Drain sends in flight and flush resume tokens on a deploy or scale-in, within
+// SHUTDOWN_DEADLINE_MS, so the next task resumes where this one stopped.
 for (const signal of ['SIGTERM', 'SIGINT'] as const) {
   process.once(signal, () => {
     console.info(`${signal} received, shutting down`);
