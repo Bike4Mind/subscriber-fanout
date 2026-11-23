@@ -17,6 +17,7 @@ Change streams are now opened per collection instead of per query subscription, 
 - **`lastChange` is no longer written** on `querySubscriptions` per event (dedicated streams still write it, since they resume from it), and `subscribers` is only written back when the list actually shrinks. The field stays in the schema.
 
 ### Added
+- Per-recipient organization MFA policy checks for bound resource updates, including inherited resource bindings. Personal resource delivery is unchanged.
 - **`subscriberFanoutCursors` collection** holding one resume token per collection, flushed at most every 5 seconds and on shutdown. Restarts resume from it; an expired token is cleared and the stream reopens live. A dropped or renamed collection reopens its stream after the invalidate event. `SIGTERM`/`SIGINT` now stop the service cleanly so the flush on shutdown runs.
 - **Join-while-live replay**: a subscription added to an already-open stream receives the last 30 seconds (up to 500 events) of matching changes from its `updatedAt` on.
 - **Dependency `mingo` (`^7.2.7`)**, MIT, no transitive deps.
