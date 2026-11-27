@@ -171,8 +171,9 @@ describe('CollectionStream resume', () => {
       const stream = new CollectionStream('expired', c.deliver, { reopenDelayMs: 10 });
       streams.push(stream);
       stream.register('s1', registration());
+      // No check on initialStart right after open: a 286 can arrive while the stream is
+      // still opening, so the cursor may already be cleared by then.
       await stream.open();
-      assert.ok('startAfter' in (Reflect.get(stream, 'initialStart') as object));
 
       await db.collection('expired').insertOne({ n: 0 });
       await waitFor(() => Object.keys(Reflect.get(stream, 'initialStart') as object).length === 0, 'expiry detected');
