@@ -43,17 +43,28 @@ function collector() {
 
 const currentStream = (stream: CollectionStream) => Reflect.get(stream, 'stream') as mongoose.mongo.ChangeStream | undefined;
 
-// The driver sets resumeToken once the server answers the initial aggregate.
+// Only for live and startAtOperationTime streams: on a startAfter stream the driver
+// sets resumeToken from the option before the server answers.
 const streamReady = (stream: CollectionStream) => () => currentStream(stream)?.resumeToken != null;
 
-async function withConnection(run: (db: mongoose.mongo.Db) => Promise<void>) {
+async function withConnection(run: (db: mongoose.mongo.Db, streams: CollectionStream[]) => Promise<void>) {
   const name = `resume_test_${++dbCounter}`;
+  const streams: CollectionStream[] = [];
   await mongoose.connect(rs.getUri(name));
   try {
-    await run(client.db(name));
+    await run(client.db(name), streams);
   } finally {
+    await Promise.all(streams.map(stream => stream.close('idle')));
     await mongoose.disconnect();
   }
+}
+
+// Change events arrive in order, so once the sentinel is in, any duplicate of an
+// earlier event would already be in too.
+async function insertSentinel(db: mongoose.mongo.Db, collection: string, c: ReturnType<typeof collector>, subscriptionId: string) {
+  const id = String((await db.collection(collection).insertOne({ sentinel: true })).insertedId);
+  await waitFor(() => c.ids(subscriptionId).includes(id), 'sentinel delivery');
+  return id;
 }
 
 before(async () => {
@@ -63,13 +74,16 @@ before(async () => {
 
   const old = await MongoMemoryReplSet.create({ replSet: { count: 1, storageEngine: 'wiredTiger' } });
   const oldClient = new MongoClient(old.getUri());
-  const oldStream = oldClient.db('resume_test_old').collection('stale').watch();
-  await oldStream.tryNext();
-  await oldClient.db('resume_test_old').collection('stale').insertOne({ n: 1 });
-  staleToken = (await oldStream.next())._id;
-  await oldStream.close();
-  await oldClient.close();
-  await old.stop();
+  try {
+    const oldStream = oldClient.db('resume_test_old').collection('stale').watch();
+    await oldStream.tryNext();
+    await oldClient.db('resume_test_old').collection('stale').insertOne({ n: 1 });
+    staleToken = (await oldStream.next())._id;
+    await oldStream.close();
+  } finally {
+    await oldClient.close();
+    await old.stop();
+  }
   // Cluster time has one-second resolution; make sure rs starts strictly later.
   await new Promise(resolve => setTimeout(resolve, 1100));
 
@@ -92,12 +106,12 @@ describe('isResumeExpiredError', () => {
 
 describe('CollectionStream resume', () => {
   it('keeps delivering across a primary step-down without loss or duplicates', async () => {
-    await withConnection(async db => {
+    await withConnection(async (db, streams) => {
       const c = collector();
       const stream = new CollectionStream('stepdown', c.deliver);
+      streams.push(stream);
       stream.register('s1', registration());
       await stream.open();
-      await waitFor(streamReady(stream), 'stream init');
 
       const { insertedId: a } = await db.collection('stepdown').insertOne({ n: 1 });
       await waitFor(() => c.ids('s1').length === 1, 'delivery before step-down');
@@ -113,17 +127,16 @@ describe('CollectionStream resume', () => {
       }, 'a new primary');
 
       const { insertedId: b } = await db.collection('stepdown').insertOne({ n: 2 });
-      await waitFor(() => c.ids('s1').length >= 2, 'delivery after step-down');
-      await new Promise(resolve => setTimeout(resolve, 500));
-      assert.deepEqual(c.ids('s1'), [String(a), String(b)]);
-      await stream.close('idle');
+      const sentinel = await insertSentinel(db, 'stepdown', c, 's1');
+      assert.deepEqual(c.ids('s1'), [String(a), String(b), sentinel]);
     });
   });
 
   it('starts from the oldest subscription updatedAt when no cursor is stored', async () => {
-    await withConnection(async db => {
+    await withConnection(async (db, streams) => {
       const c = collector();
       const stream = new CollectionStream('startAt', c.deliver);
+      streams.push(stream);
       stream.register('s1', registration(new Date(Date.now() - 2000)));
       const { insertedId } = await db.collection('startAt').insertOne({ n: 1 });
 
@@ -131,12 +144,11 @@ describe('CollectionStream resume', () => {
       assert.ok('startAtOperationTime' in (Reflect.get(stream, 'initialStart') as object));
       await waitFor(() => c.ids('s1').length === 1, 'event written before open');
       assert.deepEqual(c.ids('s1'), [String(insertedId)]);
-      await stream.close('idle');
     });
   });
 
   it('clears a resume token that is no longer in the oplog and reopens live', async () => {
-    await withConnection(async db => {
+    await withConnection(async (db, streams) => {
       // The server checks the token only once it reads past it, and answers a token
       // it cannot find with 280 and this message rather than 286; a real 286 needs a
       // rolled-over oplog, which a test server cannot reach (990 MB minimum).
@@ -153,6 +165,7 @@ describe('CollectionStream resume', () => {
       await FanoutCursor.create({ collectionName: 'expired', resumeToken: JSON.stringify(staleToken) });
       const c = collector();
       const stream = new CollectionStream('expired', c.deliver, { reopenDelayMs: 10 });
+      streams.push(stream);
       stream.register('s1', registration());
       await stream.open();
       assert.ok('startAfter' in (Reflect.get(stream, 'initialStart') as object));
@@ -165,29 +178,30 @@ describe('CollectionStream resume', () => {
       const { insertedId } = await db.collection('expired').insertOne({ n: 1 });
       await waitFor(() => c.ids('s1').length === 1, 'delivery after reopen');
       assert.deepEqual(c.ids('s1'), [String(insertedId)]);
-      await stream.close('idle');
     });
   });
 
-  // MongoDB 8.0 can write a bulk insert outside a transaction as one oplog entry,
-  // so the events share a cluster time. Each must still arrive once, in order.
+  // MongoDB 8.0 may batch a bulk insert outside a transaction into fewer oplog
+  // entries, so events can share a cluster time. Each must still arrive once, in order.
   it('delivers every insertMany event once, live and on join-while-live replay', async () => {
-    await withConnection(async db => {
+    await withConnection(async (db, streams) => {
       const c = collector();
       const stream = new CollectionStream('bulk', c.deliver);
+      streams.push(stream);
       stream.register('live', registration());
       await stream.open();
-      await waitFor(streamReady(stream), 'stream init');
 
       const { insertedIds } = await db.collection('bulk').insertMany([1, 2, 3, 4, 5].map(n => ({ n })));
       const expected = Object.values(insertedIds).map(String);
       await waitFor(() => c.ids('live').length >= 5, 'live deliveries');
 
+      // register() replays synchronously.
       stream.register('late', registration(new Date(Date.now() - 1000)));
-      await new Promise(resolve => setTimeout(resolve, 500));
-      assert.deepEqual(c.ids('live'), expected);
       assert.deepEqual(c.ids('late'), expected);
-      await stream.close('idle');
+
+      const sentinel = await insertSentinel(db, 'bulk', c, 'live');
+      assert.deepEqual(c.ids('live'), [...expected, sentinel]);
+      assert.deepEqual(c.ids('late'), [...expected, sentinel]);
     });
   });
 });

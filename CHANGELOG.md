@@ -13,7 +13,7 @@ When you release a new version, append a section here and bump `version` in `pac
 - **An expired resume token is also recognised by error code 286** (`ChangeStreamHistoryLost`), not only by message text, on both shared and dedicated streams.
 
 ### Added
-- **Tests against MongoDB 7.0 and 8.0**: CI runs the suite on both. New tests cover resume across a primary step-down, the `startAtOperationTime` start, a resume token the server can no longer find, and `insertMany` events that share a cluster time.
+- **Tests against MongoDB 7.0 and 8.0**: CI runs the suite on both. New tests cover resume across a primary step-down, the `startAtOperationTime` start, a resume token the server can no longer find, and `insertMany` events delivered once each, in order, live and on replay.
 
 ### Notes for consumers
 - **Wire protocol**: unchanged.
