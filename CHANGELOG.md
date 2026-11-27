@@ -14,6 +14,7 @@ When you release a new version, append a section here and bump `version` in `pac
 
 ### Fixed
 - **A dedicated stream whose resume token expired now restarts from the current time.** It used to restart from the subscription's `updatedAt`, which can be older than the oplog too, so it got the same error back and retried every second without going live.
+- **A dedicated stream whose resume token expired now restarts even if clearing the stored token fails.** It used to stay closed until the service restarted.
 
 ### Added
 - **Tests against MongoDB 7.0 and 8.0**: CI runs the suite on both. New tests cover resume across a primary step-down, the `startAtOperationTime` start, a resume token the server can no longer find, and `insertMany` events delivered once each, in order, live and on replay.

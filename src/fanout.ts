@@ -257,7 +257,11 @@ export class SubscriberFanout {
           updatedAt: new Date(),
         };
 
+        // Restart even if clearing fails: the copy has no lastChange, so the new stream starts from now.
         QuerySubscription.updateOne({ _id: subscription.id }, { $unset: { lastChange: '' } })
+          .catch(err => {
+            console.error(`Failed to clear resume token for ${subscription.id}:`, err);
+          })
           .then(() => {
             changeStream.close();
             this.dedicatedStreams.delete(subscription.id);
@@ -267,9 +271,6 @@ export class SubscriberFanout {
               if (!this.subscribers.has(subscription.id)) return;
               this.openDedicatedStream(subscriptionCopy);
             }, 1000);
-          })
-          .catch(err => {
-            console.error(`Failed to clear resume token for ${subscription.id}:`, err);
           });
       }
     });
