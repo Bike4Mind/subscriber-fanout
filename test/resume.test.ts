@@ -1,0 +1,193 @@
+import { after, before, describe, it, mock } from 'node:test';
+import assert from 'node:assert/strict';
+import mongoose from 'mongoose';
+import { MongoMemoryReplSet } from 'mongodb-memory-server';
+import { ChangeEvent, CollectionStream, Registration, isResumeExpiredError } from '../src/collectionStream.js';
+import { FanoutCursor } from '../src/fanoutCursor.js';
+import { buildSubscriptionFilter } from '../src/matcher.js';
+import { IQuerySubscriptionDocument } from '../src/querySubscription.js';
+
+// Resume behaviour against real servers: a three-node set so the primary can
+// step down, and a token taken from a set that is gone before it starts.
+
+const { MongoClient } = mongoose.mongo;
+
+let rs: MongoMemoryReplSet;
+let client: mongoose.mongo.MongoClient;
+// A resume token whose cluster time is older than anything in rs's oplog.
+let staleToken: unknown;
+let dbCounter = 0;
+
+async function waitFor(predicate: () => boolean | Promise<boolean>, what: string, timeoutMs = 30000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await predicate()) return;
+    await new Promise(resolve => setTimeout(resolve, 50));
+  }
+  assert.fail(`timed out waiting for ${what}`);
+}
+
+function registration(updatedAt = new Date()): Registration {
+  const subscription = { updatedAt, query: {}, fields: {} } as unknown as IQuerySubscriptionDocument;
+  return { ...buildSubscriptionFilter({ query: {} }), subscription };
+}
+
+function collector() {
+  const delivered: Array<{ subscriptionId: string; change: ChangeEvent }> = [];
+  const ids = (subscriptionId: string) =>
+    delivered
+      .filter(d => d.subscriptionId === subscriptionId)
+      .map(d => String((d.change as { documentKey?: { _id: unknown } }).documentKey?._id));
+  return { delivered, ids, deliver: (subscriptionId: string, change: ChangeEvent) => delivered.push({ subscriptionId, change }) };
+}
+
+const currentStream = (stream: CollectionStream) => Reflect.get(stream, 'stream') as mongoose.mongo.ChangeStream | undefined;
+
+// The driver sets resumeToken once the server answers the initial aggregate.
+const streamReady = (stream: CollectionStream) => () => currentStream(stream)?.resumeToken != null;
+
+async function withConnection(run: (db: mongoose.mongo.Db) => Promise<void>) {
+  const name = `resume_test_${++dbCounter}`;
+  await mongoose.connect(rs.getUri(name));
+  try {
+    await run(client.db(name));
+  } finally {
+    await mongoose.disconnect();
+  }
+}
+
+before(async () => {
+  mock.method(console, 'info', () => {});
+  mock.method(console, 'log', () => {});
+  mock.method(console, 'error', () => {});
+
+  const old = await MongoMemoryReplSet.create({ replSet: { count: 1, storageEngine: 'wiredTiger' } });
+  const oldClient = new MongoClient(old.getUri());
+  const oldStream = oldClient.db('resume_test_old').collection('stale').watch();
+  await oldStream.tryNext();
+  await oldClient.db('resume_test_old').collection('stale').insertOne({ n: 1 });
+  staleToken = (await oldStream.next())._id;
+  await oldStream.close();
+  await oldClient.close();
+  await old.stop();
+  // Cluster time has one-second resolution; make sure rs starts strictly later.
+  await new Promise(resolve => setTimeout(resolve, 1100));
+
+  rs = await MongoMemoryReplSet.create({ replSet: { count: 3, storageEngine: 'wiredTiger' } });
+  client = new MongoClient(rs.getUri());
+  await client.connect();
+});
+
+after(async () => {
+  await client.close();
+  await rs.stop();
+});
+
+describe('isResumeExpiredError', () => {
+  it('matches ChangeStreamHistoryLost by code', () => {
+    assert.equal(isResumeExpiredError({ code: 286, message: 'some new wording' }), true);
+    assert.ok(!isResumeExpiredError({ code: 6, message: 'host unreachable' }));
+  });
+});
+
+describe('CollectionStream resume', () => {
+  it('keeps delivering across a primary step-down without loss or duplicates', async () => {
+    await withConnection(async db => {
+      const c = collector();
+      const stream = new CollectionStream('stepdown', c.deliver);
+      stream.register('s1', registration());
+      await stream.open();
+      await waitFor(streamReady(stream), 'stream init');
+
+      const { insertedId: a } = await db.collection('stepdown').insertOne({ n: 1 });
+      await waitFor(() => c.ids('s1').length === 1, 'delivery before step-down');
+
+      const primary = (await client.db('admin').command({ hello: 1 })).primary as string;
+      await client
+        .db('admin')
+        .command({ replSetStepDown: 30, secondaryCatchUpPeriodSecs: 10 })
+        .catch(() => null);
+      await waitFor(async () => {
+        const hello = await client.db('admin').command({ hello: 1 }).catch(() => null);
+        return Boolean(hello?.primary) && hello?.primary !== primary;
+      }, 'a new primary');
+
+      const { insertedId: b } = await db.collection('stepdown').insertOne({ n: 2 });
+      await waitFor(() => c.ids('s1').length >= 2, 'delivery after step-down');
+      await new Promise(resolve => setTimeout(resolve, 500));
+      assert.deepEqual(c.ids('s1'), [String(a), String(b)]);
+      await stream.close('idle');
+    });
+  });
+
+  it('starts from the oldest subscription updatedAt when no cursor is stored', async () => {
+    await withConnection(async db => {
+      const c = collector();
+      const stream = new CollectionStream('startAt', c.deliver);
+      stream.register('s1', registration(new Date(Date.now() - 2000)));
+      const { insertedId } = await db.collection('startAt').insertOne({ n: 1 });
+
+      await stream.open();
+      assert.ok('startAtOperationTime' in (Reflect.get(stream, 'initialStart') as object));
+      await waitFor(() => c.ids('s1').length === 1, 'event written before open');
+      assert.deepEqual(c.ids('s1'), [String(insertedId)]);
+      await stream.close('idle');
+    });
+  });
+
+  it('clears a resume token that is no longer in the oplog and reopens live', async () => {
+    await withConnection(async db => {
+      // The server checks the token only once it reads past it, and answers a token
+      // it cannot find with 280 and this message rather than 286; a real 286 needs a
+      // rolled-over oplog, which a test server cannot reach (990 MB minimum).
+      const probe = db.collection('expiredProbe').watch([], { startAfter: staleToken });
+      await db.collection('expiredProbe').insertOne({ n: 0 });
+      const rejected = await probe.next().then(
+        () => undefined,
+        (error: { code?: number; message?: string }) => error
+      );
+      await probe.close();
+      assert.equal(rejected?.code, 280, `server rejected the stale token with ${rejected?.code}: ${rejected?.message}`);
+      assert.ok(isResumeExpiredError(rejected));
+
+      await FanoutCursor.create({ collectionName: 'expired', resumeToken: JSON.stringify(staleToken) });
+      const c = collector();
+      const stream = new CollectionStream('expired', c.deliver, { reopenDelayMs: 10 });
+      stream.register('s1', registration());
+      await stream.open();
+      assert.ok('startAfter' in (Reflect.get(stream, 'initialStart') as object));
+
+      await db.collection('expired').insertOne({ n: 0 });
+      await waitFor(() => Object.keys(Reflect.get(stream, 'initialStart') as object).length === 0, 'expiry detected');
+      await waitFor(async () => (await FanoutCursor.countDocuments({ collectionName: 'expired' })) === 0, 'cursor cleared');
+      await waitFor(streamReady(stream), 'live reopen');
+
+      const { insertedId } = await db.collection('expired').insertOne({ n: 1 });
+      await waitFor(() => c.ids('s1').length === 1, 'delivery after reopen');
+      assert.deepEqual(c.ids('s1'), [String(insertedId)]);
+      await stream.close('idle');
+    });
+  });
+
+  // MongoDB 8.0 can write a bulk insert outside a transaction as one oplog entry,
+  // so the events share a cluster time. Each must still arrive once, in order.
+  it('delivers every insertMany event once, live and on join-while-live replay', async () => {
+    await withConnection(async db => {
+      const c = collector();
+      const stream = new CollectionStream('bulk', c.deliver);
+      stream.register('live', registration());
+      await stream.open();
+      await waitFor(streamReady(stream), 'stream init');
+
+      const { insertedIds } = await db.collection('bulk').insertMany([1, 2, 3, 4, 5].map(n => ({ n })));
+      const expected = Object.values(insertedIds).map(String);
+      await waitFor(() => c.ids('live').length >= 5, 'live deliveries');
+
+      stream.register('late', registration(new Date(Date.now() - 1000)));
+      await new Promise(resolve => setTimeout(resolve, 500));
+      assert.deepEqual(c.ids('live'), expected);
+      assert.deepEqual(c.ids('late'), expected);
+      await stream.close('idle');
+    });
+  });
+});

@@ -26,8 +26,10 @@ const PERSIST_INTERVAL_MS = 5 * 1000;
 const REOPEN_DELAY_MS = 1000;
 const MAX_REOPEN_RETRIES = 5;
 
-export function isResumeExpiredError(error: { message?: string }) {
+// 286 is ChangeStreamHistoryLost; the message text alone has changed between server versions.
+export function isResumeExpiredError(error: { message?: string; code?: unknown }) {
   return (
+    error.code === 286 ||
     error.message?.includes('Resume of change stream was not possible') ||
     error.message?.includes('resume point may no longer be in the oplog') ||
     error.message?.includes('the resume token was not found')
