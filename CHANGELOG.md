@@ -8,6 +8,8 @@ When you release a new version, append a section here and bump `version` in `pac
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-11-27
+
 Change streams are now opened per collection instead of per query subscription, cutting the server-side oplog scanning that dominated slow-op time under heavy writes.
 
 ### Changed
