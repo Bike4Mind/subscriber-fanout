@@ -26,7 +26,7 @@ const PERSIST_INTERVAL_MS = 5 * 1000;
 const REOPEN_DELAY_MS = 1000;
 const MAX_REOPEN_RETRIES = 5;
 
-// 286 is ChangeStreamHistoryLost; the message text alone has changed between server versions.
+// 286 is ChangeStreamHistoryLost. Matching the code as well as the text keeps working if the wording changes.
 export function isResumeExpiredError(error: { message?: string; code?: unknown }) {
   return (
     error.code === 286 ||

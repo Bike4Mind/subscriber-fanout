@@ -249,9 +249,12 @@ export class SubscriberFanout {
       if (isResumeExpiredError(error)) {
         console.log(`Resume token expired for subscription ${subscription.id}, clearing and restarting...`);
 
+        // Restart from now: the old updatedAt can be older than the oplog too, which
+        // would get the same error back on every reopen.
         const subscriptionCopy: IQuerySubscriptionDocument = {
           ...subscription,
           lastChange: undefined,
+          updatedAt: new Date(),
         };
 
         QuerySubscription.updateOne({ _id: subscription.id }, { $unset: { lastChange: '' } })

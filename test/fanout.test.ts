@@ -537,9 +537,12 @@ describe('SubscriberFanout', () => {
       (Reflect.get(instance, 'dedicatedStreams') as Map<string, mongoose.mongo.ChangeStream>).get(id);
     const original = dedicated();
     assert.ok(original);
+    const reopen = t.mock.method(instance, 'openDedicatedStream');
+    const expiredAt = Date.now();
 
     original.emit('error', new Error('resume point may no longer be in the oplog'));
     await waitFor(() => dedicated() !== undefined && dedicated() !== original, 'dedicated stream to reopen');
+    assert.ok(reopen.mock.calls[0].arguments[0].updatedAt.getTime() >= expiredAt, 'reopens from now, not the old updatedAt');
     await new Promise(resolve => setTimeout(resolve, 300));
 
     await db.collection('expiring').insertOne({ tag: 'yes' });
