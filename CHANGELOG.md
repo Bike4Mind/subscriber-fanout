@@ -8,6 +8,16 @@ When you release a new version, append a section here and bump `version` in `pac
 
 ## [Unreleased]
 
+### Changed
+- **Mongoose 8 (`^8.24.11`)**, which brings the MongoDB Node driver 6.20. The service now supports MongoDB 8.0 servers, and still runs on 7.0.
+- **An expired resume token is also recognised by error code 286** (`ChangeStreamHistoryLost`), not only by message text, on both shared and dedicated streams.
+
+### Added
+- **Tests against MongoDB 7.0 and 8.0**: CI runs the suite on both. New tests cover resume across a primary step-down, the `startAtOperationTime` start, a resume token the server can no longer find, and `insertMany` events that share a cluster time.
+
+### Notes for consumers
+- **Wire protocol**: unchanged.
+
 ## [1.3.0] - 2026-11-27
 
 Change streams are now opened per collection instead of per query subscription, cutting the server-side oplog scanning that dominated slow-op time under heavy writes.
