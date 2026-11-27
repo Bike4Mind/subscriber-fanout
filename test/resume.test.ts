@@ -90,6 +90,9 @@ before(async () => {
   rs = await MongoMemoryReplSet.create({ replSet: { count: 3, storageEngine: 'wiredTiger' } });
   client = new MongoClient(rs.getUri());
   await client.connect();
+  // startAtOperationTime is whole seconds; a start before the oplog's first entry is
+  // rejected as history lost, so let the oplog get a little older than one second.
+  await new Promise(resolve => setTimeout(resolve, 1100));
 });
 
 after(async () => {
@@ -137,7 +140,7 @@ describe('CollectionStream resume', () => {
       const c = collector();
       const stream = new CollectionStream('startAt', c.deliver);
       streams.push(stream);
-      stream.register('s1', registration(new Date(Date.now() - 2000)));
+      stream.register('s1', registration(new Date()));
       const { insertedId } = await db.collection('startAt').insertOne({ n: 1 });
 
       await stream.open();
@@ -149,9 +152,9 @@ describe('CollectionStream resume', () => {
 
   it('clears a resume token that is no longer in the oplog and reopens live', async () => {
     await withConnection(async (db, streams) => {
-      // The server checks the token only once it reads past it, and answers a token
-      // it cannot find with 280 and this message rather than 286; a real 286 needs a
-      // rolled-over oplog, which a test server cannot reach (990 MB minimum).
+      // The server checks the token only once it reads past it. A token from another
+      // set is answered with 280 (not found) or 286 (history lost) depending on the
+      // server version and timing; both must be treated as expired.
       const probe = db.collection('expiredProbe').watch([], { startAfter: staleToken });
       await db.collection('expiredProbe').insertOne({ n: 0 });
       const rejected = await probe.next().then(
@@ -159,7 +162,8 @@ describe('CollectionStream resume', () => {
         (error: { code?: number; message?: string }) => error
       );
       await probe.close();
-      assert.equal(rejected?.code, 280, `server rejected the stale token with ${rejected?.code}: ${rejected?.message}`);
+      assert.ok(rejected, 'server accepted the stale token');
+      assert.ok([280, 286].includes(rejected.code ?? 0), `server rejected the stale token with ${rejected.code}: ${rejected.message}`);
       assert.ok(isResumeExpiredError(rejected));
 
       await FanoutCursor.create({ collectionName: 'expired', resumeToken: JSON.stringify(staleToken) });
