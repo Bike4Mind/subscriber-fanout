@@ -13,12 +13,16 @@ permissions:
 
 jobs:
   typecheck:
-    name: Typecheck + build
+    name: Typecheck + build (MongoDB ${{ matrix.mongodb }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        mongodb: ['7.0.14', '8.0.38']
     env:
       # mongodb-memory-server downloads this mongod on first use; keep it in
       # step with the cache key below.
-      MONGOMS_VERSION: 7.0.14
+      MONGOMS_VERSION: ${{ matrix.mongodb }}
     steps:
       - uses: actions/checkout@v5
 
