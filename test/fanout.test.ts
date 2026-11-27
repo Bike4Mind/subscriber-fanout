@@ -6,7 +6,7 @@ import { MAX_SEND_ATTEMPTS, SendFn, SubscriberFanout } from '../src/fanout.js';
 import { ChangeEvent, CollectionStream, Registration } from '../src/collectionStream.js';
 import { FanoutCursor } from '../src/fanoutCursor.js';
 import { buildSubscriptionFilter } from '../src/matcher.js';
-import { IQuerySubscriptionDocument } from '../src/querySubscription.js';
+import { IQuerySubscriptionDocument, QuerySubscription } from '../src/querySubscription.js';
 import { IDataSubscriptionUpdateAction, IMessageDataToClient } from '../src/wireTypes.js';
 
 const { MongoClient, ObjectId } = mongoose.mongo;
@@ -537,9 +537,39 @@ describe('SubscriberFanout', () => {
       (Reflect.get(instance, 'dedicatedStreams') as Map<string, mongoose.mongo.ChangeStream>).get(id);
     const original = dedicated();
     assert.ok(original);
+    const reopen = t.mock.method(instance, 'openDedicatedStream');
+    const expiredAt = Date.now();
 
     original.emit('error', new Error('resume point may no longer be in the oplog'));
     await waitFor(() => dedicated() !== undefined && dedicated() !== original, 'dedicated stream to reopen');
+    assert.ok(reopen.mock.calls[0].arguments[0].updatedAt.getTime() >= expiredAt, 'reopens from now, not the old updatedAt');
+    await new Promise(resolve => setTimeout(resolve, 300));
+
+    await db.collection('expiring').insertOne({ tag: 'yes' });
+    await waitFor(() => r.updates('c1').length === 1, 'delivery after reopen');
+  });
+
+  it('restarts an expired dedicated stream even when clearing its resume token fails', async t => {
+    const { name, db } = freshDb();
+    const r = recorder();
+    t.mock.method(console, 'warn', () => {});
+    t.mock.method(console, 'error', () => {});
+    t.mock.method(console, 'log', () => {});
+    const id = await insertSubscription(db, {
+      collectionName: 'expiring',
+      query: { tag: 'yes', $comment: 'dedicated' },
+      connectionIds: ['c1'],
+    });
+    const instance = await startFanout(name, r.send);
+    const dedicated = (): mongoose.mongo.ChangeStream | undefined =>
+      (Reflect.get(instance, 'dedicatedStreams') as Map<string, mongoose.mongo.ChangeStream>).get(id);
+    const original = dedicated();
+    assert.ok(original);
+    const clear = t.mock.method(QuerySubscription, 'updateOne', () => Promise.reject(new Error('write failed')));
+
+    original.emit('error', new Error('resume point may no longer be in the oplog'));
+    await waitFor(() => dedicated() !== undefined && dedicated() !== original, 'dedicated stream to reopen');
+    clear.mock.restore();
     await new Promise(resolve => setTimeout(resolve, 300));
 
     await db.collection('expiring').insertOne({ tag: 'yes' });
